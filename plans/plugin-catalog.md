@@ -4,9 +4,9 @@
 
 ## Status — current position / next step
 
-Planning finished 2026-09-30. The repo exists only on this machine, with no commits.
+Planning finished 2026-09-30. The repo exists only on this machine; its one commit is this plan.
 
-C1 waits for G1, the go/no-go decision in the coordinating plan. G1 runs after spikes S0 and S1.
+The coordinating plan's G1 said go on 2026-09-30, so C1 can start.
 
 Before C1: the user creates the public GitHub repo `jackhurley303/qgc-plugin-catalog` and adds it
 as `origin`. It must be public so GitHub Pages is free.
