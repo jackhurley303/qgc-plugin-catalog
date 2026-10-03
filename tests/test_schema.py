@@ -224,6 +224,50 @@ def test_optional_fields_may_be_absent():
     assert _entry_errors(entry) == []
 
 
+RELEASE_REPO = "https://github.com/example-author/hello-releases"
+
+
+def _closed(entry: dict) -> dict:
+    del entry["repository"]
+    entry["releaseRepository"] = RELEASE_REPO
+    return entry
+
+
+def test_entry_with_only_a_release_repository_passes():
+    assert _entry_errors(_closed(_good("qml"))) == []
+
+
+def test_entry_with_both_repositories_passes():
+    entry = _good("qml")
+    entry["releaseRepository"] = RELEASE_REPO
+    assert _entry_errors(entry) == []
+
+
+def test_entry_with_neither_repository_is_refused():
+    entry = _closed(_good("qml"))
+    del entry["releaseRepository"]
+    assert "is not valid under any of the given schemas" in "\n".join(_entry_errors(entry))
+
+
+def test_non_github_release_repository_is_refused():
+    entry = _closed(_good("qml"))
+    entry["releaseRepository"] = "https://gitlab.com/example-author/hello-releases"
+    assert "gitlab.com" in "\n".join(_entry_errors(entry))
+
+
+def test_release_repository_with_a_path_is_refused():
+    entry = _closed(_good("qml"))
+    entry["releaseRepository"] = RELEASE_REPO + "/releases"
+    assert "does not match" in "\n".join(_entry_errors(entry))
+
+
+@pytest.mark.parametrize("field", ["repository", "releaseRepository"])
+def test_repository_with_a_git_suffix_is_refused(field):
+    entry = _good("qml")
+    entry[field] = "https://github.com/example-author/hello-qml.git"
+    assert "should not be valid under" in "\n".join(_entry_errors(entry))
+
+
 def _index(*entries: dict) -> dict:
     return {"schemaVersion": 1, "generated": "2026-10-03", "plugins": list(entries)}
 

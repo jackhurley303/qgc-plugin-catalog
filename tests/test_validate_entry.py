@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import stat
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -11,7 +12,8 @@ import pytest
 import validate_entry
 from validate_entry import DownloadError
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
+ROOT = Path(__file__).resolve().parent.parent
+FIXTURES = ROOT / "tests" / "fixtures"
 RELEASES = "https://github.com/example-author/hello-qml/releases/download/v1.0.0"
 SDK_RELEASES = "https://github.com/example-author/hello-sdk/releases/download/v2.1"
 
@@ -82,6 +84,19 @@ class FakeFetch:
         package["sha256"] = hashlib.sha256(data).hexdigest()
 
 
+class FakeRepos:
+    """Answers the public-repository check by URL and records each call. Every repository is
+    public unless a test puts a reason in problems."""
+
+    def __init__(self) -> None:
+        self.problems: dict[str, str] = {}
+        self.calls: list[str] = []
+
+    def __call__(self, url: str) -> str | None:
+        self.calls.append(url)
+        return self.problems.get(url)
+
+
 def _qml_entry(fetch: FakeFetch, data: bytes | None = None) -> dict:
     entry = _good("qml")
     fetch.serve(entry["versions"][0]["packages"]["any"], data or _qml_zip())
@@ -97,10 +112,16 @@ def _write(directory: Path, *entries: dict, names: list[str] | None = None) -> P
     return directory
 
 
-def _run(tmp_path: Path, entry: dict, fetch: FakeFetch, base: dict | None = None) -> str:
+def _run(
+    tmp_path: Path,
+    entry: dict,
+    fetch: FakeFetch,
+    base: dict | None = None,
+    repos: FakeRepos | None = None,
+) -> str:
     plugins = _write(tmp_path / "head", entry)
     base_dir = _write(tmp_path / "base", *([base] if base else []))
-    return "\n".join(validate_entry.validate(plugins, base_dir, fetch))
+    return "\n".join(validate_entry.validate(plugins, base_dir, fetch, repos or FakeRepos()))
 
 
 def _package(entry: dict) -> dict:
@@ -129,7 +150,7 @@ def test_good_sdk_entry_with_two_platforms_passes(tmp_path):
 
 def test_empty_catalog_passes(tmp_path):
     plugins = _write(tmp_path / "head")
-    assert validate_entry.validate(plugins, None, FakeFetch()) == []
+    assert validate_entry.validate(plugins, None, FakeFetch(), FakeRepos()) == []
 
 
 def test_version_already_on_base_is_not_downloaded(tmp_path):
@@ -489,7 +510,7 @@ def test_removed_entry_file_is_refused(tmp_path):
     base = _qml_entry(fetch)
     plugins = _write(tmp_path / "head")
     base_dir = _write(tmp_path / "base", base)
-    errors = "\n".join(validate_entry.validate(plugins, base_dir, fetch))
+    errors = "\n".join(validate_entry.validate(plugins, base_dir, fetch, FakeRepos()))
     assert "the entry was removed" in errors
 
 
@@ -520,7 +541,7 @@ def test_file_name_must_equal_id(tmp_path):
     fetch = FakeFetch()
     entry = _qml_entry(fetch)
     plugins = _write(tmp_path / "head", entry, names=["hello.json"])
-    errors = "\n".join(validate_entry.validate(plugins, None, fetch))
+    errors = "\n".join(validate_entry.validate(plugins, None, fetch, FakeRepos()))
     assert "the file name must be org.example.hello-qml.json" in errors
 
 
@@ -530,7 +551,7 @@ def test_duplicate_id_is_refused(tmp_path):
     plugins = _write(
         tmp_path / "head", entry, entry, names=["a.json", "org.example.hello-qml.json"]
     )
-    errors = "\n".join(validate_entry.validate(plugins, None, fetch))
+    errors = "\n".join(validate_entry.validate(plugins, None, fetch, FakeRepos()))
     assert "is already used by a.json" in errors
 
 
@@ -544,14 +565,14 @@ def test_ids_differing_only_in_case_are_refused():
 def test_stray_file_in_plugins_is_refused(tmp_path):
     plugins = _write(tmp_path / "head")
     (plugins / "notes.txt").write_text("hello")
-    errors = "\n".join(validate_entry.validate(plugins, None, FakeFetch()))
+    errors = "\n".join(validate_entry.validate(plugins, None, FakeFetch(), FakeRepos()))
     assert "holds only <id>.json files" in errors
 
 
 def test_invalid_json_is_refused(tmp_path):
     plugins = _write(tmp_path / "head")
     (plugins / "broken.json").write_text("{")
-    errors = "\n".join(validate_entry.validate(plugins, None, FakeFetch()))
+    errors = "\n".join(validate_entry.validate(plugins, None, FakeFetch(), FakeRepos()))
     assert "not valid JSON" in errors
 
 
@@ -609,3 +630,319 @@ def test_version_segment_over_nine_digits_is_refused(tmp_path, field, value):
     else:
         version["hostVersion"][field] = value
     assert "has a segment over 9 digits" in _run(tmp_path, entry, fetch)
+
+
+# --- Closed source, release repositories and the open-source rule -----------------------
+
+RELEASE_REPO = "https://github.com/example-author/hello-qml-releases"
+RELEASE_ASSETS = f"{RELEASE_REPO}/releases/download/v1.0.0"
+OPEN_REPO = "https://github.com/example-author/hello-qml"
+MISSING_BOTH = "an entry needs 'repository' or 'releaseRepository', or both"
+
+
+def _closed_entry(fetch: FakeFetch) -> dict:
+    """A closed-source entry: no repository, packages in a separate public releases repo."""
+    entry = _good("qml")
+    del entry["repository"]
+    entry["releaseRepository"] = RELEASE_REPO
+    entry["license"] = "Proprietary"
+    package = entry["versions"][0]["packages"]["any"]
+    package["url"] = f"{RELEASE_ASSETS}/hello-qml-1.0.0.zip"
+    fetch.serve(package, _qml_zip())
+    return entry
+
+
+def test_closed_source_entry_with_only_a_release_repository_passes(tmp_path):
+    fetch, repos = FakeFetch(), FakeRepos()
+    entry = _closed_entry(fetch)
+    assert _run(tmp_path, entry, fetch, repos=repos) == ""
+    assert fetch.calls == [_package(entry)["url"]]
+    assert repos.calls == [RELEASE_REPO]
+
+
+def test_open_source_entry_with_a_release_repository_passes(tmp_path):
+    fetch, repos = FakeFetch(), FakeRepos()
+    entry = _closed_entry(fetch)
+    entry["repository"] = OPEN_REPO
+    entry["license"] = "Apache-2.0"
+    assert _run(tmp_path, entry, fetch, repos=repos) == ""
+    assert repos.calls == [OPEN_REPO, RELEASE_REPO]
+
+
+def test_entry_without_repository_or_release_repository_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _qml_entry(fetch)
+    del entry["repository"]
+    errors = _run(tmp_path, entry, fetch)
+    assert MISSING_BOTH in errors
+    assert "hello-qml/releases" not in errors
+    assert fetch.calls == []
+
+
+def test_package_url_outside_the_release_repository_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _closed_entry(fetch)
+    _package(entry)["url"] = f"{RELEASE_REPO}-other/releases/download/v1.0.0/hello-qml-1.0.0.zip"
+    assert f"must be a release asset of {RELEASE_REPO}" in _run(tmp_path, entry, fetch)
+    assert fetch.calls == []
+
+
+def test_package_url_in_repository_is_refused_when_a_release_repository_is_set(tmp_path):
+    fetch = FakeFetch()
+    entry = _closed_entry(fetch)
+    entry["repository"] = OPEN_REPO
+    entry["license"] = "Apache-2.0"
+    _package(entry)["url"] = f"{OPEN_REPO}/releases/download/v1.0.0/hello-qml-1.0.0.zip"
+    assert f"must be a release asset of {RELEASE_REPO}" in _run(tmp_path, entry, fetch)
+    assert fetch.calls == []
+
+
+LICENSE_REFUSALS = [
+    pytest.param("Proprietary", "is not an OSI-approved SPDX id", id="proprietary"),
+    pytest.param("MIT OR Apache-2.0", "a compound expression is not accepted", id="compound"),
+    pytest.param("GPL-3.0", "is not an OSI-approved SPDX id", id="deprecated-id"),
+    pytest.param("mit", "is not an OSI-approved SPDX id", id="wrong-case"),
+    pytest.param("CC0-1.0", "is not an OSI-approved SPDX id", id="not-osi-approved"),
+]
+
+
+@pytest.mark.parametrize(("license_id", "expected"), LICENSE_REFUSALS)
+def test_open_source_entry_with_a_bad_license_is_refused(tmp_path, license_id, expected):
+    fetch = FakeFetch()
+    entry = _qml_entry(fetch)
+    entry["license"] = license_id
+    errors = _run(tmp_path, entry, fetch)
+    assert expected in errors
+    assert "or leave out 'repository' and list the plugin as closed source" in errors
+
+
+@pytest.mark.parametrize("license_id", ["MIT", "Apache-2.0", "GPL-3.0-only", "GPL-3.0-or-later"])
+def test_osi_approved_licenses_pass(license_id):
+    assert validate_entry.license_errors({"repository": OPEN_REPO, "license": license_id}) == []
+
+
+@pytest.mark.parametrize("license_id", ["Proprietary", "MIT OR Apache-2.0", "anything"])
+def test_closed_source_entry_may_use_any_license_text(license_id):
+    entry = {"releaseRepository": RELEASE_REPO, "license": license_id}
+    assert validate_entry.license_errors(entry) == []
+
+
+def test_osi_list_is_a_pinned_snapshot_with_its_source():
+    snapshot = json.loads((ROOT / "tools" / "vendor" / "osi-licenses.json").read_text())
+    assert snapshot["source"].startswith(
+        "https://raw.githubusercontent.com/spdx/license-list-data/v"
+    )
+    assert snapshot["fetched"] and snapshot["licenseListVersion"]
+    assert snapshot["ids"] == sorted(set(snapshot["ids"]))
+    assert {"MIT", "Apache-2.0", "GPL-3.0-only"} <= set(snapshot["ids"])
+    assert not {"GPL-3.0", "Proprietary", "MIT OR Apache-2.0"} & set(snapshot["ids"])
+
+
+def test_changing_the_release_repository_without_a_new_version_is_refused(tmp_path):
+    fetch = FakeFetch()
+    base = _qml_entry(fetch)
+    entry = copy.deepcopy(base)
+    entry["releaseRepository"] = RELEASE_REPO
+    errors = _run(tmp_path, entry, fetch, base=base)
+    assert "version '1.0.0' package 'any': " in errors
+    assert f"must be a release asset of {RELEASE_REPO}" in errors
+    assert fetch.calls == []
+
+
+def test_a_url_error_on_an_added_version_is_reported_once(tmp_path):
+    fetch = FakeFetch()
+    entry = _closed_entry(fetch)
+    _package(entry)["url"] = f"{OPEN_REPO}/releases/download/v1.0.0/hello-qml-1.0.0.zip"
+    errors = _run(tmp_path, entry, fetch).splitlines()
+    assert len([line for line in errors if "must be a release asset of" in line]) == 1
+
+
+def test_license_with_stray_whitespace_is_not_called_a_compound_expression():
+    entry = {"repository": OPEN_REPO, "license": "MIT "}
+    errors = "\n".join(validate_entry.license_errors(entry))
+    assert "leading or trailing whitespace" in errors
+    assert "compound" not in errors
+
+
+def test_repository_differing_only_in_case_is_checked_once(tmp_path):
+    fetch, repos = FakeFetch(), FakeRepos()
+    entry = _qml_entry(fetch)
+    entry["releaseRepository"] = entry["repository"].replace("example-author", "Example-Author")
+    package = _package(entry)
+    package["url"] = package["url"].replace("example-author", "Example-Author")
+    fetch.serve(package, _qml_zip())
+    assert _run(tmp_path, entry, fetch, repos=repos) == ""
+    assert repos.calls == [OPEN_REPO]
+
+
+def test_private_or_missing_repository_is_refused(tmp_path):
+    fetch, repos = FakeFetch(), FakeRepos()
+    entry = _qml_entry(fetch)
+    repos.problems[OPEN_REPO] = f"'{OPEN_REPO}' is private or does not exist"
+    errors = _run(tmp_path, entry, fetch, repos=repos)
+    assert f"repository: '{OPEN_REPO}' is private or does not exist" in errors
+
+
+def test_private_release_repository_is_refused(tmp_path):
+    fetch, repos = FakeFetch(), FakeRepos()
+    entry = _closed_entry(fetch)
+    repos.problems[RELEASE_REPO] = f"'{RELEASE_REPO}' is private or does not exist"
+    assert "releaseRepository: " in _run(tmp_path, entry, fetch, repos=repos)
+
+
+def test_repository_named_twice_is_checked_once(tmp_path):
+    fetch, repos = FakeFetch(), FakeRepos()
+    entry = _qml_entry(fetch)
+    entry["releaseRepository"] = entry["repository"]
+    assert _run(tmp_path, entry, fetch, repos=repos) == ""
+    assert repos.calls == [OPEN_REPO]
+
+
+def test_unchanged_entry_is_not_checked_for_a_public_repository(tmp_path):
+    fetch, repos = FakeFetch(), FakeRepos()
+    entry = _qml_entry(fetch)
+    repos.problems[OPEN_REPO] = "this would fail"
+    assert _run(tmp_path, entry, fetch, base=copy.deepcopy(entry), repos=repos) == ""
+    assert repos.calls == []
+
+
+def test_changed_entry_is_checked_for_a_public_repository(tmp_path):
+    fetch, repos = FakeFetch(), FakeRepos()
+    base = _qml_entry(fetch)
+    entry = copy.deepcopy(base)
+    entry["description"] = "A better description."
+    assert _run(tmp_path, entry, fetch, base=base, repos=repos) == ""
+    assert repos.calls == [OPEN_REPO]
+
+
+def _reply(status: int, body: object = b"", **headers: str):
+    raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+    sent: list[str] = []
+
+    def get(url: str):
+        sent.append(url)
+        return status, headers, raw
+
+    get.sent = sent
+    return get
+
+
+def test_public_repository_passes_the_github_check():
+    get = _reply(200, {"private": False})
+    assert validate_entry.github_repo_problem(OPEN_REPO, get) is None
+    assert get.sent == ["https://api.github.com/repos/example-author/hello-qml"]
+
+
+def test_repository_that_reports_private_is_refused():
+    problem = validate_entry.github_repo_problem(OPEN_REPO, _reply(200, {"private": True}))
+    assert problem == f"'{OPEN_REPO}' is private"
+
+
+def test_repository_without_a_private_field_is_refused():
+    problem = validate_entry.github_repo_problem(OPEN_REPO, _reply(200, {"name": "x"}))
+    assert problem is not None and "re-run" in problem
+
+
+def test_unreadable_github_answer_is_refused():
+    problem = validate_entry.github_repo_problem(OPEN_REPO, _reply(200, b"<html>"))
+    assert problem is not None and "re-run" in problem
+
+
+def test_404_means_private_or_missing():
+    problem = validate_entry.github_repo_problem(OPEN_REPO, _reply(404, {"message": "Not Found"}))
+    assert problem == f"'{OPEN_REPO}' is private or does not exist"
+
+
+RATE_LIMITED = [
+    pytest.param(_reply(429), id="429"),
+    pytest.param(
+        _reply(403, {"message": "x"}, **{"x-ratelimit-remaining": "0"}), id="403-remaining"
+    ),
+    pytest.param(_reply(403, {"message": "x"}, **{"retry-after": "60"}), id="403-retry-after"),
+    pytest.param(_reply(403, {"message": "API rate limit exceeded for 1.2.3.4"}), id="403-message"),
+]
+
+
+@pytest.mark.parametrize("get", RATE_LIMITED)
+def test_rate_limit_reply_says_re_run_and_never_private(get):
+    problem = validate_entry.github_repo_problem(OPEN_REPO, get)
+    assert problem is not None
+    assert "rate limit" in problem and "re-run" in problem
+    assert "private" not in problem
+
+
+@pytest.mark.parametrize(
+    "get",
+    [
+        pytest.param(_reply(403, {"message": "Repository access blocked"}), id="403-other"),
+        pytest.param(_reply(500, b"oops"), id="500"),
+        pytest.param(_reply(301), id="301"),
+    ],
+)
+def test_other_replies_fail_with_re_run_and_never_private(get):
+    problem = validate_entry.github_repo_problem(OPEN_REPO, get)
+    assert problem is not None
+    assert "re-run" in problem and "private" not in problem
+
+
+def test_network_failure_fails_with_re_run_and_never_private():
+    def get(url: str):
+        raise DownloadError("request failed: timed out")
+
+    problem = validate_entry.github_repo_problem(OPEN_REPO, get)
+    assert problem is not None
+    assert "re-run" in problem and "private" not in problem
+
+
+class _FakeOpener:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def open(self, request, timeout):
+        raise self.error
+
+
+def test_api_get_returns_an_http_error_status_as_a_reply(monkeypatch):
+    error = urllib.error.HTTPError(
+        "https://api.github.com/repos/x/y",
+        404,
+        "Not Found",
+        {"X-RateLimit-Remaining": "7"},
+        io.BytesIO(b'{"message":"Not Found"}'),
+    )
+    monkeypatch.setattr(validate_entry, "_OPENER", _FakeOpener(error))
+    status, headers, body = validate_entry.api_get("https://api.github.com/repos/x/y")
+    assert (status, headers["x-ratelimit-remaining"], body) == (
+        404,
+        "7",
+        b'{"message":"Not Found"}',
+    )
+
+
+def test_api_get_turns_a_network_error_into_a_download_error(monkeypatch):
+    monkeypatch.setattr(validate_entry, "_OPENER", _FakeOpener(urllib.error.URLError("no route")))
+    with pytest.raises(DownloadError, match="no route"):
+        validate_entry.api_get("https://api.github.com/repos/x/y")
+
+
+def test_main_runs_the_real_public_repository_check(tmp_path, monkeypatch):
+    seen: list[tuple] = []
+
+    def record(*args):
+        seen.append(args)
+        return []
+
+    monkeypatch.setattr(validate_entry, "validate", record)
+    plugins = _write(tmp_path / "head")
+    assert validate_entry.main([str(plugins)]) == 0
+    assert seen[0][2:] == (validate_entry.download, validate_entry.github_repo_problem)
+
+
+def test_committed_hello_qml_entry_passes_the_offline_checks():
+    entry = json.loads((ROOT / "plugins" / "io.github.jackhurley303.hello-qml.json").read_text())
+    assert validate_entry.schema_errors(entry) == []
+    assert validate_entry.license_errors(entry) == []
+    assert validate_entry.version_errors(entry) == []
+    source = validate_entry.release_source(entry)
+    for package in entry["versions"][0]["packages"].values():
+        assert validate_entry.package_url_errors(package["url"], source) == []

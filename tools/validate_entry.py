@@ -7,7 +7,14 @@ any download, and a package is opened only after its size and hash match the ent
 
 Checks that need no network run on every entry. Downloads run only for versions the base
 branch does not have yet: a version already on the base branch passed these checks when it
-was added, and the history check stops anyone changing it afterwards.
+was added, and the history check stops anyone changing it afterwards. The check that a
+repository is public runs only for an entry the pull request adds or changes, so an entry
+nobody touched never fails on a network error.
+
+An entry with `repository` claims open source. Its license must be an OSI-approved SPDX id
+from tools/vendor/osi-licenses.json, a pinned snapshot of the SPDX license list. A closed-source
+entry leaves out `repository` and names `releaseRepository`, a public repository that holds
+only the release packages.
 
 The package rules come from tools/vendor/pack_plugin.py, a pinned copy of the plugin SDK's
 tools/pack_plugin.py (QGroundControl fork, commit cd6d7b0bdcb6df144629015b4c0918963080ab97).
@@ -28,6 +35,7 @@ import re
 import stat
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from collections import Counter
@@ -41,6 +49,11 @@ from vendor import pack_plugin
 
 ROOT = Path(__file__).resolve().parent.parent
 ENTRY_SCHEMA = json.loads((ROOT / "schema" / "entry.schema.json").read_text())
+OSI_LICENSES = frozenset(
+    json.loads((ROOT / "tools" / "vendor" / "osi-licenses.json").read_text())["ids"]
+)
+
+GITHUB_API_REPOS = "https://api.github.com/repos/"
 
 # The largest package the catalog accepts, compressed. A QDrive release binary is about 3 MB
 # per architecture, so this leaves room for growth while keeping CI downloads short.
@@ -63,6 +76,9 @@ class DownloadError(Exception):
 # fetch(url, limit) returns the body, reading at most limit + 1 bytes. The extra byte tells
 # the caller that the body is longer than the limit.
 Fetch = Callable[[str, int], bytes]
+
+# repo_check(url) returns None when the repository is public, or the reason it is not.
+RepoCheck = Callable[[str], str | None]
 
 
 # --- Versions -------------------------------------------------------------------------
@@ -91,7 +107,72 @@ def _optional_version_key(text: object) -> tuple[int, ...] | None:
 
 def schema_errors(entry: object) -> list[str]:
     validator = Draft202012Validator(ENTRY_SCHEMA)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(entry)]
+    errors: list[str] = []
+    for error in validator.iter_errors(entry):
+        if error.validator == "anyOf" and not error.path:
+            # The stock message for this rule repeats the whole entry.
+            message = "an entry needs 'repository' or 'releaseRepository', or both"
+        else:
+            message = error.message
+        errors.append(f"{error.json_path}: {message}")
+    return errors
+
+
+def license_errors(entry: dict) -> list[str]:
+    """An entry with `repository` claims open source, so its license must be OSI-approved.
+
+    The id must be in the pinned list exactly. A compound expression such as "MIT OR
+    Apache-2.0" is refused in v1, and so is a deprecated id such as "GPL-3.0".
+    """
+    if not entry.get("repository"):
+        return []
+    license_id = entry["license"]
+    if license_id in OSI_LICENSES:
+        return []
+    if license_id != license_id.strip():
+        hint = "; it has leading or trailing whitespace"
+    elif len(license_id.split()) > 1:
+        hint = "; a compound expression is not accepted in v1"
+    else:
+        hint = ""
+    return [
+        f"license '{license_id}' is not an OSI-approved SPDX id{hint}. An entry with "
+        "'repository' claims open source. Use an id from tools/vendor/osi-licenses.json, "
+        "or leave out 'repository' and list the plugin as closed source"
+    ]
+
+
+def release_source(entry: dict) -> str:
+    """The repository whose release assets hold the packages."""
+    return entry.get("releaseRepository") or entry["repository"]
+
+
+def source_errors(entry: dict) -> list[str]:
+    """Every package URL, in every version, must be a release asset of the release source.
+
+    This needs no network, so it runs on every entry. Without it, an entry could change
+    `releaseRepository` and leave its released packages pointing at the old repository.
+    """
+    errors: list[str] = []
+    source = release_source(entry)
+    for version in entry["versions"]:
+        for key, package in sorted(version["packages"].items()):
+            where = f"version '{version['version']}' package '{key}'"
+            errors.extend(
+                f"{where}: {error}" for error in package_url_errors(package["url"], source)
+            )
+    return errors
+
+
+def offline_errors(file_name: str, entry: dict) -> list[str]:
+    """The checks on one schema-valid entry that need no network and no base branch."""
+    errors: list[str] = []
+    if file_name != f"{entry['id']}.json":
+        errors.append(f"the file name must be {entry['id']}.json")
+    errors.extend(version_errors(entry))
+    errors.extend(license_errors(entry))
+    errors.extend(source_errors(entry))
+    return errors
 
 
 def version_errors(entry: dict) -> list[str]:
@@ -161,8 +242,9 @@ def added_versions(old: dict | None, new: dict) -> list[dict]:
 
 
 def package_url_errors(url: str, repository: str) -> list[str]:
-    """The package must be a release asset of the entry's own repository on github.com.
+    """The package must be a release asset of the entry's release repository on github.com.
 
+    The release repository is `releaseRepository` when the entry has one, else `repository`.
     This runs before any download. It limits CI to fetching from GitHub, from the repository
     the reviewer checked.
     """
@@ -225,6 +307,77 @@ def download(url: str, limit: int) -> bytes:
             return read_capped(response, limit)
     except (OSError, http.client.HTTPException) as exc:
         raise DownloadError(f"download of '{url}' failed: {exc}") from exc
+
+
+# --- The public-repository check ------------------------------------------------------
+
+# GitHub answers an API call as (status, lower-case headers, body).
+ApiReply = tuple[int, dict[str, str], bytes]
+ApiGet = Callable[[str], ApiReply]
+
+_MAX_API_BODY_BYTES = 1024 * 1024
+
+
+def api_get(url: str) -> ApiReply:
+    """Call the GitHub API with no login. An HTTP error status is a reply, not an exception."""
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "qgc-plugin-catalog-validator",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    try:
+        with _OPENER.open(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            return response.status, headers, read_capped(response, _MAX_API_BODY_BYTES)
+    except urllib.error.HTTPError as exc:
+        headers = {key.lower(): value for key, value in exc.headers.items()}
+        return exc.code, headers, read_capped(exc, _MAX_API_BODY_BYTES)
+    except (OSError, http.client.HTTPException) as exc:
+        raise DownloadError(f"request to '{url}' failed: {exc}") from exc
+
+
+def _is_rate_limited(status: int, headers: dict[str, str], body: bytes) -> bool:
+    if status == 429:
+        return True
+    return status == 403 and (
+        headers.get("x-ratelimit-remaining") == "0"
+        or "retry-after" in headers
+        or b"rate limit" in body.lower()
+    )
+
+
+def github_repo_problem(repository: str, get: ApiGet = api_get) -> str | None:
+    """None when the repository is public, or the reason the check failed.
+
+    The call has no login, so GitHub answers 404 for a private repository exactly as for a
+    missing one, and both fail. The limit is 60 calls an hour for one IP address, and the
+    runners share addresses. A limit reply must say "re-run", never "private", so a
+    rate-limited run is not mistaken for a private repository. Any reply this check does not
+    understand fails too: a check that cannot run never passes.
+    """
+    owner_repo = urlsplit(repository).path.strip("/")
+    try:
+        status, headers, body = get(GITHUB_API_REPOS + owner_repo)
+    except DownloadError as exc:
+        return f"could not check that '{repository}' is public ({exc}); re-run the job"
+    if _is_rate_limited(status, headers, body):
+        return f"GitHub's rate limit stopped the public check for '{repository}'; re-run the job"
+    if status == 404:
+        return f"'{repository}' is private or does not exist"
+    if status != 200:
+        return (
+            f"could not check that '{repository}' is public (GitHub answered HTTP {status}); "
+            "re-run the job"
+        )
+    try:
+        private = json.loads(body)["private"]
+    except (ValueError, KeyError, TypeError):
+        return f"could not read GitHub's answer for '{repository}'; re-run the job"
+    if private is not False:
+        return f"'{repository}' is private"
+    return None
 
 
 # --- Checks on a downloaded package ---------------------------------------------------
@@ -340,7 +493,7 @@ def archive_errors(data: bytes, entry: dict, version: dict) -> list[str]:
 
 def package_errors(package: dict, entry: dict, version: dict, fetch: Fetch) -> list[str]:
     url = package["url"]
-    errors = package_url_errors(url, entry["repository"])
+    errors = package_url_errors(url, release_source(entry))
     if errors:
         return errors
 
@@ -384,7 +537,24 @@ def _load_dir(plugins_dir: Path) -> tuple[dict[str, object], list[str]]:
     return loaded, errors
 
 
-def validate(plugins_dir: Path, base_dir: Path | None, fetch: Fetch) -> list[str]:
+def repository_errors(entry: dict, repo_check: RepoCheck) -> list[str]:
+    """Each repository the entry names must be public. One call per distinct repository."""
+    errors: list[str] = []
+    checked: set[str] = set()
+    for field in ("repository", "releaseRepository"):
+        url = entry.get(field)
+        if url is None or url.lower() in checked:
+            continue
+        checked.add(url.lower())
+        problem = repo_check(url)
+        if problem is not None:
+            errors.append(f"{field}: {problem}")
+    return errors
+
+
+def validate(
+    plugins_dir: Path, base_dir: Path | None, fetch: Fetch, repo_check: RepoCheck
+) -> list[str]:
     """Every problem with the entries in plugins_dir, compared with base_dir."""
     entries, errors = _load_dir(plugins_dir)
     base_entries: dict[str, object] = {}
@@ -403,14 +573,14 @@ def validate(plugins_dir: Path, base_dir: Path | None, fetch: Fetch) -> list[str
         assert isinstance(entry, dict)
         valid[file_name] = entry
 
-        if file_name != f"{entry['id']}.json":
-            errors.append(f"{file_name}: the file name must be {entry['id']}.json")
-        errors.extend(f"{file_name}: {error}" for error in version_errors(entry))
+        errors.extend(f"{file_name}: {error}" for error in offline_errors(file_name, entry))
 
         old = base_entries.get(file_name)
         old = old if isinstance(old, dict) else None
         if old is not None:
             errors.extend(f"{file_name}: {error}" for error in history_errors(old, entry))
+        if old != entry:
+            errors.extend(f"{file_name}: {error}" for error in repository_errors(entry, repo_check))
 
         for version in added_versions(old, entry):
             for key, package in sorted(version["packages"].items()):
@@ -419,7 +589,9 @@ def validate(plugins_dir: Path, base_dir: Path | None, fetch: Fetch) -> list[str
                     errors.append(f"{where}: {error}")
 
     errors.extend(duplicate_id_errors(valid))
-    return errors
+    # A package URL on an added version is refused by source_errors and again by package_errors,
+    # with the same text. Report it once.
+    return list(dict.fromkeys(errors))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -437,7 +609,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {directory} is not a directory", file=sys.stderr)
             return 1
 
-    errors = validate(args.plugins_dir, args.base, download)
+    errors = validate(args.plugins_dir, args.base, download, github_repo_problem)
     for error in errors:
         print(f"error: {error}", file=sys.stderr)
     if errors:

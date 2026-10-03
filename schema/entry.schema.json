@@ -4,7 +4,8 @@
   "title": "QGroundControl plugin catalog entry, schema v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "name", "author", "summary", "description", "license", "repository", "versions"],
+  "required": ["id", "name", "author", "summary", "description", "license", "versions"],
+  "anyOf": [{ "required": ["repository"] }, { "required": ["releaseRepository"] }],
   "properties": {
     "id": {
       "type": "string",
@@ -18,7 +19,13 @@
     "homepage": { "type": "string", "pattern": "^https://" },
     "repository": {
       "type": "string",
-      "pattern": "^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+      "pattern": "^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+      "not": { "pattern": "\\.git$" }
+    },
+    "releaseRepository": {
+      "type": "string",
+      "pattern": "^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+      "not": { "pattern": "\\.git$" }
     },
     "icon": { "type": "string", "pattern": "^https://" },
     "screenshots": {

@@ -51,9 +51,9 @@ def build_index(plugins_dir: Path, generated: str) -> tuple[dict | None, list[st
             continue
         assert isinstance(entry, dict)
         valid[file_name] = entry
-        if file_name != f"{entry['id']}.json":
-            errors.append(f"{file_name}: the file name must be {entry['id']}.json")
-        errors.extend(f"{file_name}: {error}" for error in validate_entry.version_errors(entry))
+        errors.extend(
+            f"{file_name}: {error}" for error in validate_entry.offline_errors(file_name, entry)
+        )
     errors.extend(validate_entry.duplicate_id_errors(valid))
     if errors:
         return None, errors

@@ -131,6 +131,53 @@ def test_duplicate_version_refuses_the_build(tmp_path: Path):
     assert any("repeats version" in error for error in errors)
 
 
+def _closed_entry() -> dict:
+    entry = _good("qml")
+    del entry["repository"]
+    entry["releaseRepository"] = "https://github.com/example-author/hello-qml-releases"
+    entry["license"] = "Proprietary"
+    package = entry["versions"][0]["packages"]["any"]
+    package["url"] = package["url"].replace("/hello-qml/", "/hello-qml-releases/")
+    return entry
+
+
+def test_closed_source_entry_builds_and_keeps_release_repository(tmp_path: Path):
+    _write(tmp_path / "plugins", _closed_entry())
+    index, errors = build_index.build_index(tmp_path / "plugins", GENERATED)
+    assert errors == []
+    assert index is not None
+    plugin = index["plugins"][0]
+    assert "repository" not in plugin
+    assert plugin["releaseRepository"].endswith("/hello-qml-releases")
+
+
+def test_open_source_entry_with_a_bad_license_refuses_the_build(tmp_path: Path):
+    entry = _good("qml")
+    entry["license"] = "Proprietary"
+    _write(tmp_path / "plugins", entry)
+    index, errors = build_index.build_index(tmp_path / "plugins", GENERATED)
+    assert index is None
+    assert any("is not an OSI-approved SPDX id" in error for error in errors)
+
+
+def test_package_url_outside_the_release_repository_refuses_the_build(tmp_path: Path):
+    entry = _good("qml")
+    entry["releaseRepository"] = "https://github.com/example-author/hello-releases"
+    _write(tmp_path / "plugins", entry)
+    index, errors = build_index.build_index(tmp_path / "plugins", GENERATED)
+    assert index is None
+    assert any("must be a release asset of" in error for error in errors)
+
+
+def test_entry_without_either_repository_refuses_the_build(tmp_path: Path):
+    entry = _closed_entry()
+    del entry["releaseRepository"]
+    _write(tmp_path / "plugins", entry)
+    index, errors = build_index.build_index(tmp_path / "plugins", GENERATED)
+    assert index is None
+    assert any("'repository' or 'releaseRepository'" in error for error in errors)
+
+
 def test_invalid_json_refuses_the_build(tmp_path: Path):
     (tmp_path / "plugins").mkdir()
     (tmp_path / "plugins" / "broken.json").write_text("{")

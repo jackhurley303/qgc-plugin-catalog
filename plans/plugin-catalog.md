@@ -40,7 +40,15 @@ user decided four things that day:
 - The maintainer builds a verified package from the reviewed commit. GitHub build attestations
   stay an option until the coordinating plan's S6 answers.
 
-Next: `/implement-unit plans/plugin-catalog.md C5`. Run settings: Sonnet · high · off.
+C5 shipped 2026-10-03: `releaseRepository`, an optional `repository`, the OSI license rule and
+the public-repo check, with their tests and docs. The suite grew from 131 to 186 tests, and 92 fail
+with the source change reverted. A live
+run of `validate_entry.py` passed the committed hello-qml entry and refused a made-up repository
+as "private or does not exist".
+
+Next: QDrive Q1 (`plugins/qdrive/plans/plugin-catalog.md`) can run once the user creates the public
+repo `jackhurley303/qdrive-releases` and the two tokens. C6 waits for the coordinating plan's S6.
+C6 run settings: Opus · high · on.
 
 ## Goal & summary
 
@@ -79,7 +87,8 @@ order across repos and the whole-change acceptance. QDrive's release pipeline is
 
 - **Index:** `schemaVersion` (integer, `1`), `generated` (ISO date), `plugins` (list of entries).
 - **Entry:** `id`, `name`, `author`, `summary`, `description`, `license`, `homepage`,
-  `repository`, `icon`, `screenshots`, `versions`.
+  `repository` (optional), `releaseRepository` (optional), `icon`, `screenshots`, `versions`. An
+  entry needs `repository`, `releaseRepository` or both.
 - **Version:** `version`, `tier`, `apiVersion`, `qmlApiVersion` (qml tier, optional),
   `hostVersion` (`min`, `max`), `released`, `notes`, `packages`.
 - **Packages:** a map from a platform key to `url`, `sha256` and `size`. The keys are
@@ -187,8 +196,11 @@ read-only permissions and the absence of secrets limit it. C2 owns these checks.
 
 C5's public-repo check calls the GitHub API with no login, which allows 60 requests per hour from
 one IP address. GitHub-hosted runners share addresses, so other jobs may spend that limit. A
-rate-limit response must fail with "rate limited, re-run", never with "private". This is not
-measured.
+rate-limit response fails with "rate limit ... re-run", never with "private". Measured 2026-10-03:
+a public repo answers 200 with `"private": false`, a missing repo answers 404, and both carry
+`x-ratelimit-remaining`. A rate-limit reply was not measured live, because it takes 60 calls. The
+tests fake it, and treat a 429, or a 403 with `x-ratelimit-remaining: 0`, a `Retry-After` header or
+"rate limit" in the body, as rate-limited.
 
 **CI is not the trust boundary; the maintainer's merge is.** A `pull_request` run uses the PR's own
 copy of `validate.yml`. Only the script and its dependencies come from the base branch. So a PR can
@@ -290,6 +302,14 @@ second layer that catches mistakes. It does not stop a PR that edits the workflo
   compound or deprecated license id; `repository` with a private or missing repo. A rate-limit
   response gives the re-run message. A closed-source entry with only `releaseRepository` passes. The
   committed hello-qml entry still passes. The review is clean.
+- **As built:** `tools/vendor/osi-licenses.json` is SPDX list v3.29.0 (2026-09-16), 141 ids, from
+  the tag URL recorded in the file. `validate()` now takes a fourth argument, `repo_check`, beside
+  `fetch`. The check runs for an entry the PR adds or changes in any way, and for both
+  `repository` and `releaseRepository`. `build_index.py` copies entries whole. Both scripts now share
+  `offline_errors()`, which also checks every package URL of every version against the release
+  source, so an entry cannot change `releaseRepository` and strand its released packages. The schema's root `anyOf` message repeats the whole entry, so `schema_errors()`
+  replaces it with one line. The schema refuses a `.git` suffix on both repository fields.
+  C6 adds its maintainer check next to these.
 - **Run settings:** Sonnet · high · off. The review uses Opus, because the URL rule decides where
   CI downloads from.
 
@@ -342,7 +362,7 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 - [x] **C3** — index build and Pages publishing — [Sonnet · medium · off] — 2026-10-03
 - [x] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off] — 2026-10-03
   (release, Pages and the macOS install confirmed)
-- [ ] **C5** — closed-source entries and the open-source rule — [Sonnet · high · off]
+- [x] **C5** — closed-source entries and the open-source rule — [Sonnet · high · off] — 2026-10-03
 - [ ] **C6** — verification records (waits for S6) — [Opus · high · on]
 
 ## Open questions
