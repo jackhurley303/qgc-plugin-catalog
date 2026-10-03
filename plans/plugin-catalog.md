@@ -53,8 +53,37 @@ C6 run settings: Opus · high · on.
 The coordinating plan's S6 shipped 2026-10-03. GitHub build attestations work for a public repo
 and are refused for a user-owned private repo. So C6 accepts `method: attestation` only when the
 package was built in the entry's public `repository`. A closed-source plugin uses
-`maintainer-build`. C6's brief carries the rule. Next:
-`/implement-unit ~/qgc-plugin-catalog/plans/plugin-catalog.md C6`, Opus · high · on.
+`maintainer-build`. C6's brief carries the rule.
+
+C6's code is in place, 2026-10-03: `tools/verification.py`, `schema/verification.schema.json`,
+`MAINTAINERS`, `verifications/`, the `verified` mark in `build_index.py`, and the docs. The suite
+grew from 186 to 273 tests. Before the review fixes, with the three edited source files reverted,
+46 of the new tests failed. The other new tests cover `tools/verification.py`, which only exists
+after C6. A live run on a copy of the catalog passed a maintainer's record, refused it from the
+author "stranger", and marked only the recorded package in the index.
+
+The Opus review found two ways past the CI check, both now fixed. First, a PR could make
+`verifications` or `plugins` a symlink to the base checkout, which then sat inside the PR's
+checkout. Both sides read the same files, so CI saw no change, and after the merge the build read
+files nobody checked. The scripts now refuse those symlinks, and `validate.yml` checks the PR out
+into `pr/`, beside `base/`. Second, a stranger could add their login to `MAINTAINERS` in one green
+PR. A `MAINTAINERS` change now needs a maintainer as author. The reviewer's own probe script now
+fails in CI and in the build.
+
+Next, in this order, to finish C6:
+
+1. The user commits C6 and pushes it straight to `main`, as for C2 to C5. As a PR it would fail:
+   its new `validate.yml` passes `--author` to the base branch's old script, which does not know
+   it. A push does not run `validate.yml`.
+2. The user turns on branch protection for `main`: "Require a pull request before merging" and
+   "Require review from Code Owners". Admin bypass stays on, because the one maintainer cannot
+   approve their own PR. Then read it back with
+   `gh api repos/jackhurley303/qgc-plugin-catalog/branches/main/protection`.
+3. The red PR from a non-maintainer. Push a throwaway branch `c6-check-base` from `main` whose
+   `MAINTAINERS` lists another login. Open a PR into it that adds a record for an existing entry
+   and version, with the right `sha256`, so that no other error fires first. `Validate entries`
+   must fail with "not in the base branch's MAINTAINERS". Close the PR and delete both branches.
+4. Tick C6. Then U5 runs in the coordinating plan.
 
 ## Goal & summary
 
@@ -82,6 +111,7 @@ order across repos and the whole-change acceptance. QDrive's release pipeline is
   coordinating plan's "The index is the contract" section, which QGC's `PluginCatalog` parser
   also implements.
 - `tools/validate_entry.py` — the PR checks.
+- `tools/verification.py` — the checks on verification records, and the `verified` marks (C6).
 - `tools/build_index.py` — merges the entries into `index.json`.
 - `samples/` — the qml-tier sample plugin.
 - `.github/workflows/validate.yml` runs on `pull_request`. `publish.yml` runs on a push to `main`.
@@ -168,8 +198,9 @@ source of that version and found nothing malicious. It does not mean the plugin 
   verification before the release. With `attestation`, a GitHub build attestation ties the hash to
   the commit and the workflow, so the author can release first. `attestation` needs an entry with
   `repository`, and the attestation's source repo must be that `repository`. The maintainer checks
-  it with `gh attestation verify <package> -R <repository> --source-digest <sourceCommit>
-  --signer-workflow <workflow path> --deny-self-hosted-runners`. The last flag refuses a build on
+  it with `gh attestation verify <package> -R <owner>/<repo> --source-digest <sourceCommit>
+  --signer-workflow <owner>/<repo>/.github/workflows/<file> --deny-self-hosted-runners`, where
+  `<owner>/<repo>` comes from `repository`. The last flag refuses a build on
   the author's own runner, where the author controls the build machine. S6 (2026-10-03) found that
   a user-owned private repo cannot store an attestation, so a closed-source plugin uses
   `maintainer-build`. The user chose on 2026-10-03 to keep both methods: `attestation` is the
@@ -360,6 +391,26 @@ second layer that catches mistakes. It does not stop a PR that edits the workflo
   verified, and drops the mark when the record is revoked. A deliberately bad PR from a
   non-maintainer shows red on GitHub. `CODEOWNERS` covers the protected paths, and the branch
   protection rule requires its review. The review is clean.
+- **As built:**
+  - The record checks live in a new `tools/verification.py`, which imports nothing from
+    `validate_entry.py`. `record_errors()` runs on every record in both scripts, with or without a
+    base branch. So an entry PR that breaks an existing record also fails: for example, it drops
+    `repository` from an entry that has an `attestation` record.
+  - `change_errors()` runs only when some file under `verifications/` differs from the base.
+  - A record names a version exactly as the entry spells it, and names each version once. A
+    record may list some of a version's platform keys.
+  - The existing items stay identical and in order; new items go at the end. Only a new item's
+    reviewer must be in
+    `MAINTAINERS`, so a past reviewer may leave it.
+  - A missing `--author`, or a base without `MAINTAINERS`, refuses any change.
+  - `MAINTAINERS` skips blank lines, `#` lines and any line that is not a login. Logins compare
+    without case.
+  - `index.schema.json` uses `$ref` to point at the entry schema, so `verified` went into
+    `entry.schema.json`'s `package`. `offline_errors()` refuses it in a `plugins/` file.
+  - Both CLIs now take the catalog root: `validate_entry.py pr --base base --author "$PR_AUTHOR"`
+    and `build_index.py . --out _site`. The two CI checkouts sit side by side.
+  - Both scripts refuse a symlink at `plugins/`, `verifications/` or `MAINTAINERS`, and inside the
+    two directories. A `MAINTAINERS` change needs a maintainer as author, like a record change.
 - **Run settings:** Opus · high · on. The maintainer rule is the trust boundary for "Verified".
 
 ## Change acceptance
@@ -383,7 +434,8 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 - [x] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off] — 2026-10-03
   (release, Pages and the macOS install confirmed)
 - [x] **C5** — closed-source entries and the open-source rule — [Sonnet · high · off] — 2026-10-03
-- [ ] **C6** — verification records — [Opus · high · on]
+- [ ] **C6** — verification records — [Opus · high · on] — code in place 2026-10-03; the push,
+  branch protection and the red PR wait (see Status)
 
 ## Open questions
 

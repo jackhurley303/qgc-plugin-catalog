@@ -1,1 +1,10 @@
 * @jackhurley303
+
+# The paths that decide what CI checks and who may verify a plugin. Branch protection on main
+# requires a code owner's review, so a pull request cannot change these unseen.
+/CODEOWNERS @jackhurley303
+/MAINTAINERS @jackhurley303
+/verifications/ @jackhurley303
+/.github/ @jackhurley303
+/tools/ @jackhurley303
+/schema/ @jackhurley303

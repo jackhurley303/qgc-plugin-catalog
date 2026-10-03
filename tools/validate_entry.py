@@ -20,8 +20,14 @@ The package rules come from tools/vendor/pack_plugin.py, a pinned copy of the pl
 tools/pack_plugin.py (QGroundControl fork, commit cd6d7b0bdcb6df144629015b4c0918963080ab97).
 Copy it again byte for byte when the SDK's rules change.
 
+The maintainer's verification records in verifications/ are checked by tools/verification.py.
+The pull request author's login comes in through --author.
+
 Usage:
-    python3 tools/validate_entry.py <plugins-dir> [--base <base-plugins-dir>]
+    python3 tools/validate_entry.py <catalog-dir> [--base <base-catalog-dir>] [--author <login>]
+
+A catalog directory is a checkout of this repo: it holds plugins/, verifications/ and
+MAINTAINERS.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import unquote, urlsplit
 
+import verification
 from jsonschema import Draft202012Validator
 from vendor import pack_plugin
 
@@ -164,6 +171,18 @@ def source_errors(entry: dict) -> list[str]:
     return errors
 
 
+def authored_verified_errors(entry: dict) -> list[str]:
+    """The schema allows `verified` on a package because the index carries it. Only
+    build_index.py writes it, from the maintainer's records in verifications/."""
+    return [
+        f"version '{version['version']}' package '{key}': 'verified' is added by the catalog "
+        "from verifications/; remove it from the entry"
+        for version in entry["versions"]
+        for key, package in sorted(version["packages"].items())
+        if "verified" in package
+    ]
+
+
 def offline_errors(file_name: str, entry: dict) -> list[str]:
     """The checks on one schema-valid entry that need no network and no base branch."""
     errors: list[str] = []
@@ -172,6 +191,7 @@ def offline_errors(file_name: str, entry: dict) -> list[str]:
     errors.extend(version_errors(entry))
     errors.extend(license_errors(entry))
     errors.extend(source_errors(entry))
+    errors.extend(authored_verified_errors(entry))
     return errors
 
 
@@ -524,8 +544,15 @@ def _load_dir(plugins_dir: Path) -> tuple[dict[str, object], list[str]]:
     """Every entry file by name, plus errors for files that are not entries."""
     loaded: dict[str, object] = {}
     errors: list[str] = []
+    # A symlink could point the pull request's copy at the base branch's copy, so the checks
+    # would see no change, and after the merge it could point at files nobody checked.
+    if plugins_dir.is_symlink():
+        return loaded, ["plugins/ must be a directory, not a symlink"]
     for path in sorted(plugins_dir.iterdir()):
         if path.name == ".gitkeep":
+            continue
+        if path.is_symlink():
+            errors.append(f"{path.name}: is a symlink; plugins/ holds only regular files")
             continue
         if not path.is_file() or path.suffix != ".json":
             errors.append(f"{path.name}: plugins/ holds only <id>.json files")
@@ -535,6 +562,16 @@ def _load_dir(plugins_dir: Path) -> tuple[dict[str, object], list[str]]:
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             errors.append(f"{path.name}: not valid JSON: {exc}")
     return loaded, errors
+
+
+def valid_entries(plugins_dir: Path) -> dict[str, dict]:
+    """The entries that pass the schema, by id. The record checks compare against these."""
+    loaded, _ = _load_dir(plugins_dir)
+    return {
+        entry["id"]: entry
+        for entry in loaded.values()
+        if isinstance(entry, dict) and not schema_errors(entry)
+    }
 
 
 def repository_errors(entry: dict, repo_check: RepoCheck) -> list[str]:
@@ -595,26 +632,35 @@ def validate(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check the catalog entries in a pull request.")
-    parser.add_argument("plugins_dir", type=Path, help="the pull request's plugins/ directory")
+    parser = argparse.ArgumentParser(
+        description="Check the catalog entries and verification records in a pull request."
+    )
+    parser.add_argument("catalog", type=Path, help="the pull request's checkout of this repo")
     parser.add_argument(
         "--base",
         type=Path,
-        help="the base branch's plugins/ directory; versions in it are not downloaded again",
+        help="the base branch's checkout; versions in it are not downloaded again, and "
+        "its MAINTAINERS decides who may change verifications/",
     )
+    parser.add_argument("--author", help="the pull request author's GitHub login")
     args = parser.parse_args(argv)
 
-    for directory in (args.plugins_dir, args.base):
+    plugins_dir = args.catalog / "plugins"
+    base_plugins = args.base / "plugins" if args.base is not None else None
+    for directory in (plugins_dir, base_plugins):
         if directory is not None and not directory.is_dir():
             print(f"error: {directory} is not a directory", file=sys.stderr)
             return 1
 
-    errors = validate(args.plugins_dir, args.base, download, github_repo_problem)
+    errors = validate(plugins_dir, base_plugins, download, github_repo_problem)
+    errors += verification.validate(
+        args.catalog, args.base, args.author, valid_entries(plugins_dir)
+    )
     for error in errors:
         print(f"error: {error}", file=sys.stderr)
     if errors:
         return 1
-    print(f"All entries in {args.plugins_dir} passed.")
+    print(f"All entries and records in {args.catalog} passed.")
     return 0
 
 

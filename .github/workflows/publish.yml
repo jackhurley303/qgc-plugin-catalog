@@ -41,7 +41,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Build index.json
-        run: python tools/build_index.py plugins --out _site
+        run: python tools/build_index.py . --out _site
 
       # The schemas' $id URLs point here.
       - name: Copy the schemas

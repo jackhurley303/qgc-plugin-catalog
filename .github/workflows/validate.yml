@@ -21,9 +21,11 @@ jobs:
         with:
           egress-policy: audit
 
+      # The two checkouts sit side by side, so neither tree can hold files inside the other.
       - name: Checkout pull request
         uses: actions/checkout@v7
         with:
+          path: pr
           persist-credentials: false
 
       # The base branch's entries. A version already there is not downloaded again, and the
@@ -45,7 +47,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r base/requirements-dev.txt
 
-      # Runs the base branch's copy of the script and schema, so a pull request cannot
-      # weaken the checks that judge it.
+      # Runs the base branch's copy of the script and schemas, and reads the base branch's
+      # MAINTAINERS. This stops a mistake, not an attack: a pull request runs its own copy of
+      # this file, so it can change this step. The CODEOWNERS review on main stops that.
+      # The login goes through env so that it never becomes part of the shell command.
       - name: Validate entries
-        run: python base/tools/validate_entry.py plugins --base base/plugins
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: python base/tools/validate_entry.py pr --base base --author "$PR_AUTHOR"

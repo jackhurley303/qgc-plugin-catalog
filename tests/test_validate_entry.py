@@ -577,15 +577,16 @@ def test_invalid_json_is_refused(tmp_path):
 
 
 def test_main_exits_nonzero_on_an_error(tmp_path, capsys):
-    plugins = _write(tmp_path / "head")
+    plugins = _write(tmp_path / "head" / "plugins")
     (plugins / "broken.json").write_text("{")
-    assert validate_entry.main([str(plugins)]) == 1
+    assert validate_entry.main([str(tmp_path / "head")]) == 1
     assert "error: broken.json" in capsys.readouterr().err
 
 
 def test_main_passes_an_empty_catalog(tmp_path):
-    plugins = _write(tmp_path / "head")
-    assert validate_entry.main([str(plugins), "--base", str(plugins)]) == 0
+    _write(tmp_path / "head" / "plugins")
+    head = str(tmp_path / "head")
+    assert validate_entry.main([head, "--base", head]) == 0
 
 
 def test_zip_with_two_manifests_is_refused():
@@ -933,8 +934,9 @@ def test_main_runs_the_real_public_repository_check(tmp_path, monkeypatch):
         return []
 
     monkeypatch.setattr(validate_entry, "validate", record)
-    plugins = _write(tmp_path / "head")
-    assert validate_entry.main([str(plugins)]) == 0
+    plugins = _write(tmp_path / "head" / "plugins")
+    assert validate_entry.main([str(tmp_path / "head")]) == 0
+    assert seen[0][0] == plugins
     assert seen[0][2:] == (validate_entry.download, validate_entry.github_repo_problem)
 
 
@@ -946,3 +948,82 @@ def test_committed_hello_qml_entry_passes_the_offline_checks():
     source = validate_entry.release_source(entry)
     for package in entry["versions"][0]["packages"].values():
         assert validate_entry.package_url_errors(package["url"], source) == []
+
+
+# --- Verification ----------------------------------------------------------------------------
+
+
+def test_author_written_verified_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _qml_entry(fetch)
+    _package(entry)["verified"] = {
+        "reviewer": "someone",
+        "date": "2026-10-04",
+        "method": "maintainer-build",
+    }
+    # The schema allows the field, because the index carries it.
+    assert validate_entry.schema_errors(entry) == []
+    errors = _run(tmp_path, entry, fetch)
+    assert "package 'any': 'verified' is added by the catalog from verifications/" in errors
+
+
+def _checkout(root: Path, entry: dict, records: list[dict], maintainers: str) -> Path:
+    _write(root / "plugins", entry)
+    (root / "verifications").mkdir()
+    for record in records:
+        (root / "verifications" / f"{record['id']}.json").write_text(json.dumps(record))
+    (root / "MAINTAINERS").write_text(maintainers)
+    return root
+
+
+def _sdk_record() -> dict:
+    sha = _good("sdk")["versions"][0]["packages"]["macos-universal"]["sha256"]
+    return {
+        "id": "org.example.hello-sdk",
+        "versions": [
+            {
+                "version": "2.1",
+                "packages": {"macos-universal": sha},
+                "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
+                "method": "maintainer-build",
+                "reviewer": "jackhurley303",
+                "date": "2026-10-04",
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(("author", "code"), [("jackhurley303", 0), ("stranger", 1)])
+def test_main_passes_the_author_to_the_maintainer_rule(tmp_path, capsys, author, code):
+    base = _checkout(tmp_path / "base", _good("sdk"), [], "jackhurley303\n")
+    head = _checkout(tmp_path / "head", _good("sdk"), [_sdk_record()], "jackhurley303\n")
+    args = [str(head), "--base", str(base), "--author", author]
+    assert validate_entry.main(args) == code
+    if code:
+        assert "'stranger' is not in the base branch's MAINTAINERS" in capsys.readouterr().err
+
+
+def test_main_without_author_refuses_a_record_change(tmp_path, capsys):
+    base = _checkout(tmp_path / "base", _good("sdk"), [], "jackhurley303\n")
+    head = _checkout(tmp_path / "head", _good("sdk"), [_sdk_record()], "jackhurley303\n")
+    assert validate_entry.main([str(head), "--base", str(base)]) == 1
+    assert "(--author)" in capsys.readouterr().err
+
+
+def test_symlinked_plugins_dir_is_refused(tmp_path):
+    # With plugins/ pointed at the base copy, no version looks new, so nothing is downloaded.
+    base = _write(tmp_path / "base", _good("qml"))
+    (tmp_path / "head").symlink_to(base)
+    errors = validate_entry.validate(tmp_path / "head", base, FakeFetch(), FakeRepos())
+    assert "plugins/ must be a directory, not a symlink" in errors
+
+
+def test_symlinked_entry_file_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _qml_entry(fetch)
+    target = tmp_path / "elsewhere.json"
+    target.write_text(json.dumps(entry))
+    plugins = _write(tmp_path / "head")
+    (plugins / f"{entry['id']}.json").symlink_to(target)
+    errors = "\n".join(validate_entry.validate(plugins, None, fetch, FakeRepos()))
+    assert f"{entry['id']}.json: is a symlink; plugins/ holds only regular files" in errors

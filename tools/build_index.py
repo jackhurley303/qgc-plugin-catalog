@@ -4,12 +4,17 @@
 The output depends only on the entries and the generated date, so the same input gives the
 same bytes. Entries sort by id, and the versions in each entry sort by version number.
 
+A package gets `verified` when a record in verifications/ that is not revoked lists its
+version, its platform key and its SHA-256. tools/verification.py checks the records.
+
 The build runs after a merge, when the PR checks already passed. It repeats the checks that need
-no network anyway, and it checks the finished index against schema/index.schema.json. It never
-writes a partial index: any error means no file.
+no network anyway, on the entries and on the records, and it checks the finished index against
+schema/index.schema.json. It never writes a partial index: any error means no file.
 
 Usage:
-    python3 tools/build_index.py <plugins-dir> --out <dir> [--generated YYYY-MM-DD]
+    python3 tools/build_index.py <catalog-dir> --out <dir> [--generated YYYY-MM-DD]
+
+The catalog directory is a checkout of this repo: it holds plugins/ and verifications/.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import sys
 from pathlib import Path
 
 import validate_entry
+import verification
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
@@ -39,7 +45,23 @@ def index_errors(index: dict) -> list[str]:
     return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(index)]
 
 
-def build_index(plugins_dir: Path, generated: str) -> tuple[dict | None, list[str]]:
+def _with_marks(entry: dict, marks: dict[tuple[str, str, str], dict]) -> dict:
+    """A copy of entry, versions sorted, with `verified` on each package a record covers."""
+    versions = []
+    for version in sorted(
+        entry["versions"], key=lambda v: validate_entry.version_key(v["version"])
+    ):
+        packages = {}
+        for key, package in version["packages"].items():
+            mark = marks.get((entry["id"], version["version"], key))
+            packages[key] = {**package, "verified": mark} if mark else package
+        versions.append({**version, "packages": packages})
+    return {**entry, "versions": versions}
+
+
+def build_index(
+    plugins_dir: Path, generated: str, verifications_dir: Path | None = None
+) -> tuple[dict | None, list[str]]:
     """The index for plugins_dir, or None and the reasons it cannot be built."""
     entries, errors = validate_entry._load_dir(plugins_dir)
 
@@ -55,13 +77,18 @@ def build_index(plugins_dir: Path, generated: str) -> tuple[dict | None, list[st
             f"{file_name}: {error}" for error in validate_entry.offline_errors(file_name, entry)
         )
     errors.extend(validate_entry.duplicate_id_errors(valid))
+    records: dict[str, dict] = {}
+    if verifications_dir is not None:
+        by_id = {entry["id"]: entry for entry in valid.values()}
+        records, record_errors = verification.check_records(verifications_dir, by_id)
+        errors.extend(record_errors)
     if errors:
         return None, errors
 
-    plugins = []
-    for entry in sorted(valid.values(), key=lambda item: item["id"]):
-        versions = sorted(entry["versions"], key=lambda v: validate_entry.version_key(v["version"]))
-        plugins.append({**entry, "versions": versions})
+    marks = verification.verified_marks(records)
+    plugins = [
+        _with_marks(entry, marks) for entry in sorted(valid.values(), key=lambda item: item["id"])
+    ]
     index = {"schemaVersion": 1, "generated": generated, "plugins": plugins}
 
     errors = index_errors(index)
@@ -74,7 +101,7 @@ def render(index: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build index.json from the catalog entries.")
-    parser.add_argument("plugins_dir", type=Path, help="the plugins/ directory")
+    parser.add_argument("catalog", type=Path, help="a checkout of this repo")
     parser.add_argument("--out", type=Path, required=True, help="the directory for index.json")
     parser.add_argument(
         "--generated",
@@ -82,12 +109,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.plugins_dir.is_dir():
-        print(f"error: {args.plugins_dir} is not a directory", file=sys.stderr)
+    plugins_dir = args.catalog / "plugins"
+    if not plugins_dir.is_dir():
+        print(f"error: {plugins_dir} is not a directory", file=sys.stderr)
         return 1
     generated = args.generated or datetime.datetime.now(datetime.UTC).date().isoformat()
 
-    index, errors = build_index(args.plugins_dir, generated)
+    index, errors = build_index(plugins_dir, generated, args.catalog / "verifications")
     if index is None:
         for error in errors:
             print(f"error: {error}", file=sys.stderr)

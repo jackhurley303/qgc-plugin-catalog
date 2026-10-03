@@ -3,15 +3,20 @@
 This repo lists plugins for QGroundControl. Each plugin has one JSON file under `plugins/`. QGC
 reads a generated `index.json` from GitHub Pages and shows the plugins in its Plugins page.
 
-**Status:** the schemas, the PR validator, the index build, the Pages workflow and closed-source
-entries exist. The one entry is the sample plugin `io.github.jackhurley303.hello-qml`.
+**Status:** the schemas, the PR validator, the index build, the Pages workflow, closed-source
+entries and verification records exist. No plugin is verified yet.
 
 ## Layout
 
 - `plugins/<id>.json` — one entry per plugin. The file name equals the entry's `id`.
 - `schema/entry.schema.json` — the schema for one entry.
 - `schema/index.schema.json` — the schema for the generated `index.json`.
+- `verifications/<id>.json` — the maintainers' verification records for one plugin. Only a
+  maintainer changes them.
+- `schema/verification.schema.json` — the schema for one verification record.
+- `MAINTAINERS` — the GitHub logins of the maintainers, one per line.
 - `tools/validate_entry.py` — the checks CI runs on every PR.
+- `tools/verification.py` — the checks on verification records, and the `verified` marks.
 - `tools/build_index.py` — merges the entries into `index.json`.
 - `samples/hello-qml/` — the qml-tier sample plugin behind the first entry.
 - `tools/vendor/pack_plugin.py` — a pinned copy of the plugin SDK's packing rules.
@@ -48,13 +53,14 @@ CI downloads each new package and checks it:
 Check your entry before you open the PR. Install the tools first, as in "Develop" below:
 
 ```bash
-.venv/bin/python tools/validate_entry.py plugins
+.venv/bin/python tools/validate_entry.py .
 ```
 
-This local run downloads every version and asks the GitHub API about every entry. CI passes
-`--base` with the base branch's `plugins/`, so it downloads only new versions, checks the
-repositories of only the entries the PR adds or changes, and also refuses a change to an existing
-version.
+The argument is a checkout of this repo. This local run downloads every version and asks the
+GitHub API about every entry. CI passes `--base` with a checkout of the base branch, so it
+downloads only new versions, checks the repositories of only the entries the PR adds or changes,
+and also refuses a change to an existing version. CI also passes `--author` with the PR author's
+login, for the verification rules in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 To release a new version, add a new item to `versions` in your file. Never change or remove an
 existing version. A released hash must not change under a user.
@@ -68,7 +74,7 @@ file. It refuses to write an index if any entry fails the checks that need no ne
 the index on your machine:
 
 ```bash
-.venv/bin/python tools/build_index.py plugins --out _site
+.venv/bin/python tools/build_index.py . --out _site
 ```
 
 The repo's Pages source must be set to "GitHub Actions" once, in Settings → Pages.
@@ -94,6 +100,18 @@ example `Proprietary`.
 If an entry has both, packages must come from `releaseRepository`. A package URL in `repository`
 fails.
 
+## Verified
+
+A maintainer can review the source of one version of a plugin, open or closed source, and mark
+that version verified. Verified means that the maintainer read the source and found nothing
+malicious. It does not mean the plugin has no bugs. QGC will show "Verified" or "Not verified" for
+the package it would install (coordinating plan unit U5).
+
+The maintainer writes a record in `verifications/<id>.json`. `build_index.py` adds `verified` to
+a package in the index when a record lists that version, that platform key and the same
+`sha256`, and that item is not revoked. [CONTRIBUTING.md](CONTRIBUTING.md) describes how to ask
+for verification.
+
 ## Entry format (schema v1)
 
 An entry has these fields. All are strings unless noted.
@@ -117,7 +135,9 @@ Each item in `versions` has:
 - `notes` — optional text.
 - `packages` — a map from a platform key to `url`, `sha256` and `size`. The platform keys are
   `macos-universal`, `windows-x64` and `linux-x64`. The key `any` is for the `qml` tier only.
-  `sha256` is 64 lowercase hex characters. `url` starts with `https://`.
+  `sha256` is 64 lowercase hex characters. `url` starts with `https://`. In `index.json`, a
+  package can also carry `verified` (`reviewer`, `date`, `method`). The catalog adds it; an entry
+  in `plugins/` never has it, and CI refuses one that does.
 
 The schema rejects any field it does not list, so a typo fails the check. QGC itself ignores
 unknown fields. A new field is therefore added to the schema first.

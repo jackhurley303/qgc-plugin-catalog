@@ -188,7 +188,7 @@ def test_invalid_json_refuses_the_build(tmp_path: Path):
 
 def test_main_writes_index_json(plugins: Path, tmp_path: Path):
     out = tmp_path / "site"
-    code = build_index.main([str(plugins), "--out", str(out), "--generated", GENERATED])
+    code = build_index.main([str(plugins.parent), "--out", str(out), "--generated", GENERATED])
     assert code == 0
     written = json.loads((out / "index.json").read_text())
     assert written["generated"] == GENERATED
@@ -201,7 +201,7 @@ def test_main_writes_nothing_on_error(tmp_path: Path):
     entry["sumary"] = "typo"
     _write(tmp_path / "plugins", entry)
     out = tmp_path / "site"
-    code = build_index.main([str(tmp_path / "plugins"), "--out", str(out)])
+    code = build_index.main([str(tmp_path), "--out", str(out)])
     assert code == 1
     assert not (out / "index.json").exists()
 
@@ -213,7 +213,7 @@ def test_main_refuses_a_missing_plugins_dir(tmp_path: Path):
 def test_default_generated_date_is_today_in_utc(plugins: Path, tmp_path: Path):
     out = tmp_path / "site"
     before = datetime.datetime.now(datetime.UTC).date()
-    assert build_index.main([str(plugins), "--out", str(out)]) == 0
+    assert build_index.main([str(plugins.parent), "--out", str(out)]) == 0
     after = datetime.datetime.now(datetime.UTC).date()
     generated = datetime.date.fromisoformat(
         json.loads((out / "index.json").read_text())["generated"]
@@ -226,3 +226,120 @@ def test_committed_plugins_build_a_valid_index():
     assert errors == []
     assert index is not None
     assert "io.github.jackhurley303.hello-qml" in [entry["id"] for entry in index["plugins"]]
+
+
+# --- Verified packages ---------------------------------------------------------------------
+
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _record_item(entry: dict, key: str, **changes) -> dict:
+    version = entry["versions"][0]
+    item = {
+        "version": version["version"],
+        "packages": {key: version["packages"][key]["sha256"]},
+        "sourceCommit": COMMIT,
+        "method": "maintainer-build",
+        "reviewer": "jackhurley303",
+        "date": "2026-10-04",
+    }
+    item.update(changes)
+    return item
+
+
+def _write_record(verifications: Path, plugin_id: str, *items: dict) -> None:
+    verifications.mkdir(exist_ok=True)
+    record = {"id": plugin_id, "versions": list(items)}
+    (verifications / f"{plugin_id}.json").write_text(json.dumps(record))
+
+
+def _packages(index: dict, plugin_id: str) -> dict:
+    entry = next(item for item in index["plugins"] if item["id"] == plugin_id)
+    return entry["versions"][0]["packages"]
+
+
+def test_record_marks_its_package_verified(plugins: Path, tmp_path: Path):
+    sdk = _good("sdk")
+    _write_record(tmp_path / "verifications", sdk["id"], _record_item(sdk, "macos-universal"))
+    index, errors = build_index.build_index(plugins, GENERATED, tmp_path / "verifications")
+    assert errors == []
+    assert index is not None
+    packages = _packages(index, sdk["id"])
+    assert packages["macos-universal"]["verified"] == {
+        "reviewer": "jackhurley303",
+        "date": "2026-10-04",
+        "method": "maintainer-build",
+    }
+    # The record lists one platform key, so the other package stays unverified.
+    assert "verified" not in packages["windows-x64"]
+    assert "verified" not in _packages(index, _good("qml")["id"])["any"]
+    assert build_index.index_errors(index) == []
+
+
+def test_revoked_record_drops_the_mark(plugins: Path, tmp_path: Path):
+    sdk = _good("sdk")
+    revoked = {"date": "2026-10-05", "reason": "Found a hidden download."}
+    item = _record_item(sdk, "macos-universal", revoked=revoked)
+    _write_record(tmp_path / "verifications", sdk["id"], item)
+    index, errors = build_index.build_index(plugins, GENERATED, tmp_path / "verifications")
+    assert errors == []
+    assert index is not None
+    assert "verified" not in _packages(index, sdk["id"])["macos-universal"]
+
+
+def test_record_hash_that_differs_refuses_the_build(plugins: Path, tmp_path: Path):
+    sdk = _good("sdk")
+    item = _record_item(sdk, "macos-universal")
+    item["packages"]["macos-universal"] = "f" * 64
+    _write_record(tmp_path / "verifications", sdk["id"], item)
+    index, errors = build_index.build_index(plugins, GENERATED, tmp_path / "verifications")
+    assert index is None
+    assert any("in the record, but" in error for error in errors)
+
+
+def test_build_does_not_change_the_loaded_entries(plugins: Path, tmp_path: Path):
+    sdk = _good("sdk")
+    _write_record(tmp_path / "verifications", sdk["id"], _record_item(sdk, "macos-universal"))
+    first, _ = build_index.build_index(plugins, GENERATED, tmp_path / "verifications")
+    second, _ = build_index.build_index(plugins, GENERATED)
+    assert first is not None and second is not None
+    assert "verified" not in _packages(second, sdk["id"])["macos-universal"]
+
+
+def test_author_written_verified_refuses_the_build(tmp_path: Path):
+    entry = _good("qml")
+    entry["versions"][0]["packages"]["any"]["verified"] = {
+        "reviewer": "someone",
+        "date": "2026-10-04",
+        "method": "maintainer-build",
+    }
+    _write(tmp_path / "plugins", entry)
+    index, errors = build_index.build_index(tmp_path / "plugins", GENERATED)
+    assert index is None
+    assert any("'verified' is added by the catalog" in error for error in errors)
+
+
+def test_main_reads_the_verifications_dir(plugins: Path, tmp_path: Path):
+    sdk = _good("sdk")
+    _write_record(tmp_path / "verifications", sdk["id"], _record_item(sdk, "windows-x64"))
+    out = tmp_path / "site"
+    assert build_index.main([str(tmp_path), "--out", str(out), "--generated", GENERATED]) == 0
+    written = json.loads((out / "index.json").read_text())
+    assert "verified" in _packages(written, sdk["id"])["windows-x64"]
+
+
+def test_committed_records_build_a_valid_index():
+    root = FIXTURES.parent.parent
+    index, errors = build_index.build_index(root / "plugins", GENERATED, root / "verifications")
+    assert errors == []
+    assert index is not None
+
+
+def test_symlinked_verifications_dir_refuses_the_build(plugins: Path, tmp_path: Path):
+    sdk = _good("sdk")
+    elsewhere = tmp_path / "elsewhere"
+    _write_record(elsewhere, sdk["id"], _record_item(sdk, "macos-universal"))
+    (tmp_path / "verifications").symlink_to(elsewhere)
+    index, errors = build_index.build_index(plugins, GENERATED, tmp_path / "verifications")
+    assert index is None
+    assert errors == ["verifications/ must be a directory, not a symlink"]

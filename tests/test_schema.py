@@ -180,9 +180,42 @@ def test_bad_qml_entry_is_refused(mutate, expected):
     assert expected in "\n".join(_entry_errors(entry))
 
 
-@pytest.mark.parametrize("schema", [ENTRY_SCHEMA, INDEX_SCHEMA], ids=["entry", "index"])
+VERIFICATION_SCHEMA = _load(ROOT / "schema" / "verification.schema.json")
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [ENTRY_SCHEMA, INDEX_SCHEMA, VERIFICATION_SCHEMA],
+    ids=["entry", "index", "verification"],
+)
 def test_schema_is_itself_valid(schema):
     Draft202012Validator.check_schema(schema)
+
+
+VERIFIED = {"reviewer": "jackhurley303", "date": "2026-10-04", "method": "maintainer-build"}
+
+
+def test_index_package_may_carry_verified():
+    entry = _good("sdk")
+    _first_package(entry)["verified"] = dict(VERIFIED, method="attestation")
+    index = {"schemaVersion": 1, "generated": "2026-10-04", "plugins": [entry]}
+    assert _index_errors(index) == []
+
+
+@pytest.mark.parametrize(
+    ("verified", "expected"),
+    [
+        (True, "is not of type 'object'"),
+        ({**VERIFIED, "method": "trust-me"}, "is not one of"),
+        ({**VERIFIED, "reviewer": ""}, "does not match"),
+        ({k: v for k, v in VERIFIED.items() if k != "date"}, "'date' is a required property"),
+        ({**VERIFIED, "sourceCommit": "x"}, "Additional properties are not allowed"),
+    ],
+)
+def test_malformed_verified_is_refused(verified, expected):
+    entry = _good("sdk")
+    _first_package(entry)["verified"] = verified
+    assert expected in "\n".join(_entry_errors(entry))
 
 
 @pytest.mark.parametrize("name", ["qml", "sdk"])
