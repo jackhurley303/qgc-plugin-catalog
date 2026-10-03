@@ -22,8 +22,11 @@ A passing CI run is required. It is not enough. A maintainer reviews every PR.
 **Every PR**
 
 - Only the plugin's own file changes.
-- Existing versions are not changed or removed. Versions are only added.
-- Package URLs point to release assets in the entry's own `repository`.
+
+CI checks the rest, with `tools/validate_entry.py`. It refuses a change to or removal of an
+existing version. It refuses a package URL outside the entry's own `repository`. It also refuses
+a package whose size, hash or `qgcplugin.json` disagrees with the entry. CI runs the base
+branch's copy of the script, so a PR that changes the validator is judged by the old one.
 
 ## Changing the schema
 

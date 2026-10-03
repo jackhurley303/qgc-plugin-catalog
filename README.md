@@ -3,15 +3,17 @@
 This repo lists plugins for QGroundControl. Each plugin has one JSON file under `plugins/`. QGC
 reads a generated `index.json` from GitHub Pages and shows the plugins in its Plugins page.
 
-**Status:** the schemas and their tests exist. The PR validator, the index build and the Pages
-publishing are not built yet. Until they are, a PR gets a human review only.
+**Status:** the schemas and the PR validator exist. The index build and the Pages publishing are
+not built yet.
 
 ## Layout
 
 - `plugins/<id>.json` — one entry per plugin. The file name equals the entry's `id`.
 - `schema/entry.schema.json` — the schema for one entry.
 - `schema/index.schema.json` — the schema for the generated `index.json`.
-- `tests/` — `pytest` tests for the schemas.
+- `tools/validate_entry.py` — the checks CI runs on every PR.
+- `tools/vendor/pack_plugin.py` — a pinned copy of the plugin SDK's packing rules.
+- `tests/` — `pytest` tests for the schemas and the validator.
 
 ## Publish a plugin
 
@@ -19,6 +21,24 @@ publishing are not built yet. Until they are, a PR gets a human review only.
 2. Publish the zip as a GitHub Release asset in your own repository.
 3. Compute the zip's SHA-256 and its size in bytes.
 4. Add `plugins/<id>.json` with your plugin's details (see below), and open a PR.
+
+CI downloads each new package and checks it:
+
+- The URL is `https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>`, in the entry's
+  own `repository`.
+- The package is 50 MB or less. Its size and SHA-256 equal the entry's `size` and `sha256`.
+- The zip's `qgcplugin.json` has the same `id`, `version`, `tier`, `apiVersion`, `qmlApiVersion`
+  and `hostVersion` as the entry's version.
+- The package passes the SDK's `pack_plugin.py` rules.
+
+Check your entry before you open the PR. Install the tools first, as in "Develop" below:
+
+```bash
+.venv/bin/python tools/validate_entry.py plugins
+```
+
+This local run downloads every version. CI passes `--base` with the base branch's `plugins/`, so
+it downloads only new versions and also refuses a change to an existing one.
 
 To release a new version, add a new item to `versions` in your file. Never change or remove an
 existing version. A released hash must not change under a user.

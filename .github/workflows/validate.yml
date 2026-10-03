@@ -1,0 +1,51 @@
+name: Validate entries
+
+# Checks the catalog entries in every pull request with tools/validate_entry.py. The script
+# downloads packages from URLs that strangers wrote, so this job holds nothing worth stealing:
+# it runs on pull_request (never pull_request_target), reads the repo only, and has no secrets.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout pull request
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The base branch's entries. A version already there is not downloaded again, and the
+      # script refuses any change to it.
+      - name: Checkout base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # From the base branch too: a package the pull request chose would run inside the
+      # interpreter that runs the checks.
+      - name: Install dependencies
+        run: pip install -r base/requirements-dev.txt
+
+      # Runs the base branch's copy of the script and schema, so a pull request cannot
+      # weaken the checks that judge it.
+      - name: Validate entries
+        run: python base/tools/validate_entry.py plugins --base base/plugins

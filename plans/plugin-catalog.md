@@ -7,11 +7,16 @@
 Planning finished 2026-09-30. C1 shipped 2026-10-03: the schemas, their tests, the docs and the
 `ci.yml` job. The public GitHub repo `jackhurley303/qgc-plugin-catalog` is `origin`.
 
-The user pushes C1 and confirms that the `CI` workflow runs green on GitHub. Only then does C1's
-"CI is green" hold. Local `ruff` and `pytest` were green.
+C2 shipped 2026-10-03: `tools/validate_entry.py`, its tests and `validate.yml`. Local `ruff` and
+`pytest` (116 tests) were green. Two steps wait for the user:
 
-Next: `/implement-unit ~/qgc-plugin-catalog/plans/plugin-catalog.md C2`. Run settings:
-Opus · medium · on.
+- Push C2 straight to `main`, not through a PR. `validate.yml` runs the base branch's copy of
+  the script, so a PR whose base lacks the script fails that job.
+- Open a deliberately bad test PR, for example an entry with a wrong `sha256`. Confirm that
+  `Validate entries` shows red, then close the PR. Only then does C2's "shows red on GitHub" hold.
+
+Next: `/implement-unit ~/qgc-plugin-catalog/plans/plugin-catalog.md C3`. Run settings:
+Sonnet · medium · off.
 
 ## Goal & summary
 
@@ -125,9 +130,17 @@ read-only permissions and the absence of secrets limit it. C2 owns these checks.
   test job. `pytest` has no `pythonpath` entry for `tools/` yet: C2 adds `pythonpath = ["tools"]`
   to `pyproject.toml` when its tests import `validate_entry`. JSON Schema cannot express two
   rules that QGC's parser enforces, so C2's script checks them and tests both. First, versions in
-  one entry must be unique after normalising, because the parser treats `1.0` and `1.0.0` as the
-  same version and refuses the whole catalog on a duplicate. Second, plugin ids must be unique
-  across `plugins/`. C2's script also checks that the file name equals the entry's `id`.
+  one entry must be unique as `QVersionNumber` compares them: integer segments, so `1.01`
+  equals `1.1`, but trailing zeros count, so `1.0` and `1.0.0` differ (Qt 6.11.1 docs,
+  `QVersionNumber::compare`). The parser refuses the whole catalog on a duplicate. Second,
+  plugin ids must be unique across `plugins/`. C2's script also checks that the file name equals
+  the entry's `id`.
+- **As built:** the package rules come from `tools/vendor/pack_plugin.py`, a byte-identical copy
+  of the SDK's script. Its source commit is in `validate_entry.py`'s docstring. `validate.yml`
+  installs dependencies from, and runs the script of, a second checkout of the base branch, so a
+  PR cannot change the checks that judge it. Only versions missing from the base branch are
+  downloaded. The script also refuses a zip that repeats a name, a zip entry outside the package
+  or a symlink, a manifest `apiVersion` that is a JSON bool, and a version segment over 9 digits.
 - **Done means:** tests pass, including each refusal: a wrong hash, a size mismatch, a size over
   the cap, a URL in another repo, an `http` URL, a zip `id` mismatch, a changed existing version,
   and a pre-release version string. A deliberately bad test PR shows red on GitHub. The review is
@@ -168,7 +181,7 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 ## Execution order and progress
 
 - [x] **C1** — repo scaffold and schema v1 — [Sonnet · medium · off] — 2026-10-03
-- [ ] **C2** — PR validator — [Opus · medium · on]
+- [x] **C2** — PR validator — [Opus · medium · on] — 2026-10-03
 - [ ] **C3** — index build and Pages publishing — [Sonnet · medium · off]
 - [ ] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off]
 
@@ -176,11 +189,11 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 
 **In-scope**
 
-- **The package size cap.** Default 50 MB. C2 decides after checking QDrive's package size.
-- **How CI gets `pack_plugin.py`.** It can download the SDK from a QGC build, or keep a pinned
-  copy here. C2 decides.
-- **Rules for plugin ids.** For example, must the id's domain match the repository owner? Default:
-  no rule, and the reviewer checks. C2 decides.
+- None open. C2 decided three:
+  - **The package size cap:** 50 MB, compressed. A QDrive Release binary is 2.8 MB for one
+    architecture.
+  - **How CI gets `pack_plugin.py`:** a pinned copy at `tools/vendor/pack_plugin.py`.
+  - **Rules for plugin ids:** none beyond the schema's pattern. The reviewer checks the id.
 
 **Deferred past this change**
 
