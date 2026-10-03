@@ -172,3 +172,10 @@ def test_default_generated_date_is_today_in_utc(plugins: Path, tmp_path: Path):
         json.loads((out / "index.json").read_text())["generated"]
     )
     assert before <= generated <= after
+
+
+def test_committed_plugins_build_a_valid_index():
+    index, errors = build_index.build_index(FIXTURES.parent.parent / "plugins", GENERATED)
+    assert errors == []
+    assert index is not None
+    assert "io.github.jackhurley303.hello-qml" in [entry["id"] for entry in index["plugins"]]

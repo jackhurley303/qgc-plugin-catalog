@@ -1,0 +1,16 @@
+{
+    "id": "io.github.jackhurley303.hello-qml",
+    "name": "Hello QML",
+    "version": "1.0.0",
+    "vendor": "Jack Hurley",
+    "description": "A minimal qml-tier sample plugin that adds one page to the Tool menu",
+    "tier": "qml",
+    "qmlApiVersion": 1,
+    "hostVersion": { "min": "5.0", "max": "" },
+    "contributes": {
+        "toolMenu": {
+            "title": "Hello QML",
+            "source": "qml/HelloView.qml"
+        }
+    }
+}

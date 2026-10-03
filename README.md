@@ -3,8 +3,8 @@
 This repo lists plugins for QGroundControl. Each plugin has one JSON file under `plugins/`. QGC
 reads a generated `index.json` from GitHub Pages and shows the plugins in its Plugins page.
 
-**Status:** the schemas, the PR validator, the index build and the Pages workflow exist. There is
-no entry yet.
+**Status:** the schemas, the PR validator, the index build and the Pages workflow exist. The one
+entry is the sample plugin `io.github.jackhurley303.hello-qml`.
 
 ## Layout
 
@@ -13,6 +13,7 @@ no entry yet.
 - `schema/index.schema.json` — the schema for the generated `index.json`.
 - `tools/validate_entry.py` — the checks CI runs on every PR.
 - `tools/build_index.py` — merges the entries into `index.json`.
+- `samples/hello-qml/` — the qml-tier sample plugin behind the first entry.
 - `tools/vendor/pack_plugin.py` — a pinned copy of the plugin SDK's packing rules.
 - `.github/workflows/publish.yml` — builds and deploys `index.json` to GitHub Pages after a merge
   to `main`.

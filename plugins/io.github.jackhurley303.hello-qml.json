@@ -1,0 +1,27 @@
+{
+  "id": "io.github.jackhurley303.hello-qml",
+  "name": "Hello QML",
+  "author": "Jack Hurley",
+  "summary": "A minimal qml-tier sample plugin.",
+  "description": "Adds one page, Hello QML, to the Tool menu. It has no binary, so it shows how a qml-tier plugin installs from the catalog.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/jackhurley303/qgc-plugin-catalog/tree/main/samples/hello-qml",
+  "repository": "https://github.com/jackhurley303/qgc-plugin-catalog",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "tier": "qml",
+      "qmlApiVersion": 1,
+      "hostVersion": { "min": "5.0", "max": "" },
+      "released": "2026-10-03",
+      "notes": "First release.",
+      "packages": {
+        "any": {
+          "url": "https://github.com/jackhurley303/qgc-plugin-catalog/releases/download/hello-qml-v1.0.0/hello-qml-1.0.0.zip",
+          "sha256": "6afe4a4401df37a3c50e2e08d3a48277e416b1f91386eb43799b72d9ebbcbd30",
+          "size": 1210
+        }
+      }
+    }
+  ]
+}
