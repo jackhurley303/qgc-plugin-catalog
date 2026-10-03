@@ -15,8 +15,19 @@ C2 shipped 2026-10-03: `tools/validate_entry.py`, its tests and `validate.yml`. 
 - Open a deliberately bad test PR, for example an entry with a wrong `sha256`. Confirm that
   `Validate entries` shows red, then close the PR. Only then does C2's "shows red on GitHub" hold.
 
-Next: `/implement-unit ~/qgc-plugin-catalog/plans/plugin-catalog.md C3`. Run settings:
-Sonnet · medium · off.
+C3 shipped 2026-10-03: `tools/build_index.py`, its tests (130 tests pass in all) and `publish.yml`.
+Three steps wait for the user, in this order:
+
+- Push C2 and C3 to `main`.
+- Enable Pages with the source set to "GitHub Actions" (Settings → Pages). The Pages API returned
+  404 on 2026-10-03, so Pages is off. Without this, `deploy-pages` fails.
+- After the first `publish.yml` run, open
+  `https://jackhurley303.github.io/qgc-plugin-catalog/index.json` and confirm it serves the empty
+  index. Only then does C3's "the Pages URL serves `index.json`" hold. Also confirm that the
+  `github-pages` environment limits deploys to `main`.
+
+Next: `/implement-unit ~/qgc-plugin-catalog/plans/plugin-catalog.md C4`. Run settings:
+Sonnet · low · off.
 
 ## Goal & summary
 
@@ -182,7 +193,7 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 
 - [x] **C1** — repo scaffold and schema v1 — [Sonnet · medium · off] — 2026-10-03
 - [x] **C2** — PR validator — [Opus · medium · on] — 2026-10-03
-- [ ] **C3** — index build and Pages publishing — [Sonnet · medium · off]
+- [x] **C3** — index build and Pages publishing — [Sonnet · medium · off] — 2026-10-03
 - [ ] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off]
 
 ## Open questions

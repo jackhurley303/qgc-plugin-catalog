@@ -3,8 +3,8 @@
 This repo lists plugins for QGroundControl. Each plugin has one JSON file under `plugins/`. QGC
 reads a generated `index.json` from GitHub Pages and shows the plugins in its Plugins page.
 
-**Status:** the schemas and the PR validator exist. The index build and the Pages publishing are
-not built yet.
+**Status:** the schemas, the PR validator, the index build and the Pages workflow exist. There is
+no entry yet.
 
 ## Layout
 
@@ -12,8 +12,11 @@ not built yet.
 - `schema/entry.schema.json` — the schema for one entry.
 - `schema/index.schema.json` — the schema for the generated `index.json`.
 - `tools/validate_entry.py` — the checks CI runs on every PR.
+- `tools/build_index.py` — merges the entries into `index.json`.
 - `tools/vendor/pack_plugin.py` — a pinned copy of the plugin SDK's packing rules.
-- `tests/` — `pytest` tests for the schemas and the validator.
+- `.github/workflows/publish.yml` — builds and deploys `index.json` to GitHub Pages after a merge
+  to `main`.
+- `tests/` — `pytest` tests for the schemas, the validator and the index build.
 
 ## Publish a plugin
 
@@ -42,6 +45,20 @@ it downloads only new versions and also refuses a change to an existing one.
 
 To release a new version, add a new item to `versions` in your file. Never change or remove an
 existing version. A released hash must not change under a user.
+
+## How the index is published
+
+After a merge to `main`, `publish.yml` runs `tools/build_index.py` and deploys the result to GitHub
+Pages. QGC reads `https://jackhurley303.github.io/qgc-plugin-catalog/index.json`. The build sorts
+entries by `id` and the versions of each entry by version number, so the same entries give the same
+file. It refuses to write an index if any entry fails the checks that need no network. To preview
+the index on your machine:
+
+```bash
+.venv/bin/python tools/build_index.py plugins --out _site
+```
+
+The repo's Pages source must be set to "GitHub Actions" once, in Settings → Pages.
 
 ## Entry format (schema v1)
 
