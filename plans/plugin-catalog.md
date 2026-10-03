@@ -38,7 +38,7 @@ user decided four things that day:
   never verified on its own. For a closed-source plugin, the owner gives the maintainer read access
   to the source (C6).
 - The maintainer builds a verified package from the reviewed commit. GitHub build attestations
-  stay an option until the coordinating plan's S6 answers.
+  stay an option until the coordinating plan's S6 answers. S6 answered on 2026-10-03; see below.
 
 C5 shipped 2026-10-03: `releaseRepository`, an optional `repository`, the OSI license rule and
 the public-repo check, with their tests and docs. The suite grew from 131 to 186 tests, and 92 fail
@@ -49,6 +49,12 @@ as "private or does not exist".
 Next: QDrive Q1 (`plugins/qdrive/plans/plugin-catalog.md`) can run once the user creates the public
 repo `jackhurley303/qdrive-releases` and the two tokens. C6 waits for the coordinating plan's S6.
 C6 run settings: Opus · high · on.
+
+The coordinating plan's S6 shipped 2026-10-03. GitHub build attestations work for a public repo
+and are refused for a user-owned private repo. So C6 accepts `method: attestation` only when the
+package was built in the entry's public `repository`. A closed-source plugin uses
+`maintainer-build`. C6's brief carries the rule. Next:
+`/implement-unit ~/qgc-plugin-catalog/plans/plugin-catalog.md C6`, Opus · high · on.
 
 ## Goal & summary
 
@@ -115,8 +121,8 @@ the "Repository:" line when it is empty.
   license that is not OSI-approved leaves out `repository`, and QGC calls it closed source. QGC
   therefore derives the label from one fact: `repository` is not empty.
 - **Package `verified` (C6, index only):** `reviewer` (a GitHub login), `date`, `method`
-  (`maintainer-build`, or `attestation` if S6 says go). `build_index.py` adds it to a package when a
-  verification record lists that version, that platform key and the same `sha256`, and the record
+  (`maintainer-build`, or `attestation` for an open-source entry; see Verification).
+  `build_index.py` adds it to a package when a verification record lists that version, that platform key and the same `sha256`, and the record
   is not revoked. Authors never write it.
 
 #### What CI checks on every PR
@@ -160,7 +166,15 @@ source of that version and found nothing malicious. It does not mean the plugin 
   the package from the reviewed commit. The author publishes that exact file as the release
   asset, so the entry's `sha256` equals the maintainer's build. The author therefore asks for
   verification before the release. With `attestation`, a GitHub build attestation ties the hash to
-  the commit and the workflow. C6 accepts `attestation` only if S6 says go.
+  the commit and the workflow, so the author can release first. `attestation` needs an entry with
+  `repository`, and the attestation's source repo must be that `repository`. The maintainer checks
+  it with `gh attestation verify <package> -R <repository> --source-digest <sourceCommit>
+  --signer-workflow <workflow path> --deny-self-hosted-runners`. The last flag refuses a build on
+  the author's own runner, where the author controls the build machine. S6 (2026-10-03) found that
+  a user-owned private repo cannot store an attestation, so a closed-source plugin uses
+  `maintainer-build`. The user chose on 2026-10-03 to keep both methods: `attestation` is the
+  normal path for open source, because `maintainer-build` makes the maintainer build every
+  platform's binary for every verified version.
 - **The review covers everything that builds the package:** the source, the build workflow,
   anything CMake downloads, and any bundled binary.
 - **Closed source:** the owner adds the maintainer as a read-only collaborator on the private repo,
@@ -189,7 +203,8 @@ input. It adds `generated` and deploys to Pages at
 ## Risks & spikes
 
 This repo has no spike of its own. The coordinating plan owns every spike. Its S0 tests a GitHub
-Release download through QGC. Its S6 tests GitHub build attestations, and C6 waits for it.
+Release download through QGC. Its S6 tested GitHub build attestations on 2026-10-03: public repos
+yes, user-owned private repos no.
 
 The main risk is CI downloading files from URLs that strangers write. The host allowlist, the
 read-only permissions and the absence of secrets limit it. C2 owns these checks.
@@ -327,14 +342,19 @@ second layer that catches mistakes. It does not stop a PR that edits the workflo
   tests, `README.md`, `CONTRIBUTING.md`.
 - **The trust boundary:** branch protection on `main` that requires a CODEOWNERS review, as Risks
   describes. The user turns it on in Settings; C6 confirms it through the API.
-- **Depends on:** C5 and the coordinating plan's S6. S6 decides whether `method` allows
-  `attestation`.
+- **Depends on:** C5 and the coordinating plan's S6, which shipped 2026-10-03.
+- **`method`:** `maintainer-build` or `attestation`. The validator refuses `attestation` in a
+  record for an entry without `repository`. It does not run `gh attestation verify` itself; the
+  maintainer runs it at review time, as Verification says, with `--deny-self-hosted-runners`.
+  CONTRIBUTING shows that command, says the build must run on a GitHub-hosted runner, and shows
+  the workflow permissions an author needs (`id-token: write`, `attestations: write`).
 - **The record:** `id`, and `versions`, a list. Each item has `version`, `packages` (platform key
   to `sha256`), `sourceCommit` (40 hex characters), `method`, `reviewer`, `date`, and optional
   `revoked` (`date`, `reason`).
 - **Done means:** tests pass, including each refusal: a `verifications/` change from a login not in
   the base branch's `MAINTAINERS`; a PR that changes `plugins/` and `verifications/` together; a
-  record for an id or version the entry lacks; a `sha256` that differs from the entry's package; a
+  record for an id or version the entry lacks; an `attestation` record for an entry without
+  `repository`; a `sha256` that differs from the entry's package; a
   `reviewer` not in `MAINTAINERS`; an edit to an existing record other than adding `revoked`; a
   `verified` field written into an entry by its author. The index marks a matching package
   verified, and drops the mark when the record is revoked. A deliberately bad PR from a
@@ -363,7 +383,7 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 - [x] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off] — 2026-10-03
   (release, Pages and the macOS install confirmed)
 - [x] **C5** — closed-source entries and the open-source rule — [Sonnet · high · off] — 2026-10-03
-- [ ] **C6** — verification records (waits for S6) — [Opus · high · on]
+- [ ] **C6** — verification records — [Opus · high · on]
 
 ## Open questions
 
@@ -376,8 +396,8 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
   - **Rules for plugin ids:** none beyond the schema's pattern. The reviewer checks the id.
 - Decided 2026-10-03 for C5 and C6:
   - **"Open source" needs an OSI-approved license** and a public repository, and QGC links to it.
-  - **Linking a package to its source:** the maintainer builds the package. `attestation` waits
-    for S6.
+  - **Linking a package to its source:** the maintainer builds the package. After S6, an
+    open-source plugin may instead use `attestation` from its public `repository`.
   - **A maintainer never verifies their own plugin.** QDrive stays unverified.
 
 **Deferred past this change**
