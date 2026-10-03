@@ -4,15 +4,14 @@
 
 ## Status — current position / next step
 
-Planning finished 2026-09-30. The repo exists only on this machine; its one commit is this plan.
+Planning finished 2026-09-30. C1 shipped 2026-10-03: the schemas, their tests, the docs and the
+`ci.yml` job. The public GitHub repo `jackhurley303/qgc-plugin-catalog` is `origin`.
 
-The coordinating plan's G1 said go on 2026-09-30, so C1 can start.
+The user pushes C1 and confirms that the `CI` workflow runs green on GitHub. Only then does C1's
+"CI is green" hold. Local `ruff` and `pytest` were green.
 
-Before C1: the user creates the public GitHub repo `jackhurley303/qgc-plugin-catalog` and adds it
-as `origin`. It must be public so GitHub Pages is free.
-
-Next, once G1 says go: `/implement-unit ~/qgc-plugin-catalog/plans/plugin-catalog.md C1`. Run
-settings: Sonnet · medium · off.
+Next: `/implement-unit ~/qgc-plugin-catalog/plans/plugin-catalog.md C2`. Run settings:
+Opus · medium · on.
 
 ## Goal & summary
 
@@ -119,7 +118,16 @@ read-only permissions and the absence of secrets limit it. C2 owns these checks.
 - **Not in scope:** publishing.
 - **Files:** new `tools/validate_entry.py`, `tests/test_validate_entry.py` (the tests build small
   fixture zips), `.github/workflows/validate.yml`.
-- **Depends on:** C1.
+- **Depends on:** C1. The entry schema (C1) already refuses a pre-release `version`, an uppercase
+  or non-64-character `sha256`, an `http` URL, and a `repository` that is not
+  `https://github.com/<owner>/<repo>`. C2 runs the schema first, so it only adds its own test for
+  the version refusal. The workflow file is `validate.yml`; C1's `ci.yml` stays as the repo's own
+  test job. `pytest` has no `pythonpath` entry for `tools/` yet: C2 adds `pythonpath = ["tools"]`
+  to `pyproject.toml` when its tests import `validate_entry`. JSON Schema cannot express two
+  rules that QGC's parser enforces, so C2's script checks them and tests both. First, versions in
+  one entry must be unique after normalising, because the parser treats `1.0` and `1.0.0` as the
+  same version and refuses the whole catalog on a duplicate. Second, plugin ids must be unique
+  across `plugins/`. C2's script also checks that the file name equals the entry's `id`.
 - **Done means:** tests pass, including each refusal: a wrong hash, a size mismatch, a size over
   the cap, a URL in another repo, an `http` URL, a zip `id` mismatch, a changed existing version,
   and a pre-release version string. A deliberately bad test PR shows red on GitHub. The review is
@@ -159,7 +167,7 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 
 ## Execution order and progress
 
-- [ ] **C1** — repo scaffold and schema v1 — [Sonnet · medium · off]
+- [x] **C1** — repo scaffold and schema v1 — [Sonnet · medium · off] — 2026-10-03
 - [ ] **C2** — PR validator — [Opus · medium · on]
 - [ ] **C3** — index build and Pages publishing — [Sonnet · medium · off]
 - [ ] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off]

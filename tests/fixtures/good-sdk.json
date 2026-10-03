@@ -1,0 +1,30 @@
+{
+  "id": "org.example.hello-sdk",
+  "name": "Hello SDK",
+  "author": "Example Author",
+  "summary": "A minimal sdk-tier plugin.",
+  "description": "Native plugin with a fly view panel.",
+  "license": "GPL-3.0-only",
+  "repository": "https://github.com/example-author/hello-sdk",
+  "versions": [
+    {
+      "version": "2.1",
+      "tier": "sdk",
+      "apiVersion": 2,
+      "hostVersion": { "min": "5.0.0", "max": "6.0" },
+      "released": "2026-10-02",
+      "packages": {
+        "macos-universal": {
+          "url": "https://github.com/example-author/hello-sdk/releases/download/v2.1/hello-sdk-macos.zip",
+          "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+          "size": 1048576
+        },
+        "windows-x64": {
+          "url": "https://github.com/example-author/hello-sdk/releases/download/v2.1/hello-sdk-windows.zip",
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "size": 2097152
+        }
+      }
+    }
+  ]
+}

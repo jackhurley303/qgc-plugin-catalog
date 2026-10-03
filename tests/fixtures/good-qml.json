@@ -1,0 +1,29 @@
+{
+  "id": "org.example.hello-qml",
+  "name": "Hello QML",
+  "author": "Example Author",
+  "summary": "A minimal qml-tier plugin.",
+  "description": "Adds one page to the tool menu.",
+  "license": "Apache-2.0",
+  "homepage": "https://example.org/hello-qml",
+  "repository": "https://github.com/example-author/hello-qml",
+  "icon": "https://example.org/hello-qml/icon.svg",
+  "screenshots": ["https://example.org/hello-qml/shot1.png"],
+  "versions": [
+    {
+      "version": "1.0.0",
+      "tier": "qml",
+      "qmlApiVersion": 1,
+      "hostVersion": { "min": "5.0", "max": "" },
+      "released": "2026-10-01",
+      "notes": "First release.",
+      "packages": {
+        "any": {
+          "url": "https://github.com/example-author/hello-qml/releases/download/v1.0.0/hello-qml-1.0.0.zip",
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "size": 2048
+        }
+      }
+    }
+  ]
+}
