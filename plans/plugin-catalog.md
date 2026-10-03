@@ -7,24 +7,9 @@
 Planning finished 2026-09-30. C1 shipped 2026-10-03: the schemas, their tests, the docs and the
 `ci.yml` job. The public GitHub repo `jackhurley303/qgc-plugin-catalog` is `origin`.
 
-C2 shipped 2026-10-03: `tools/validate_entry.py`, its tests and `validate.yml`. Local `ruff` and
-`pytest` (116 tests) were green. Two steps wait for the user:
-
-- Push C2 straight to `main`, not through a PR. `validate.yml` runs the base branch's copy of
-  the script, so a PR whose base lacks the script fails that job.
-- Open a deliberately bad test PR, for example an entry with a wrong `sha256`. Confirm that
-  `Validate entries` shows red, then close the PR. Only then does C2's "shows red on GitHub" hold.
-
-C3 shipped 2026-10-03: `tools/build_index.py`, its tests (130 tests pass in all) and `publish.yml`.
-Three steps wait for the user, in this order:
-
-- Push C2 and C3 to `main`.
-- Enable Pages with the source set to "GitHub Actions" (Settings → Pages). The Pages API returned
-  404 on 2026-10-03, so Pages is off. Without this, `deploy-pages` fails.
-- After the first `publish.yml` run, open
-  `https://jackhurley303.github.io/qgc-plugin-catalog/index.json` and confirm it serves the empty
-  index. Only then does C3's "the Pages URL serves `index.json`" hold. Also confirm that the
-  `github-pages` environment limits deploys to `main`.
+C2 shipped 2026-10-03: `tools/validate_entry.py`, its tests and `validate.yml`. C3 shipped
+2026-10-03: `tools/build_index.py`, its tests and `publish.yml`. Both were pushed straight to
+`main`, and Pages serves the index from "GitHub Actions".
 
 C4 shipped 2026-10-03: `samples/hello-qml/`, `plugins/io.github.jackhurley303.hello-qml.json` and
 one test that builds the index from the committed `plugins/`. The zip is 1210 bytes with SHA-256
@@ -42,14 +27,29 @@ The last two C2 and C3 checks passed on 2026-10-03:
 - The `github-pages` environment has one custom deployment branch policy, `main`.
   `can_admins_bypass` is `true`, so a repo admin can still deploy from another branch.
 
-Next: the coordinating plan's next row, which sits in
-`~/.claude/local/qgroundcontrol/plans/plugin-catalog.md`. Run `/lc-status` there.
+On 2026-10-03, QDrive's Q1 found that the catalog cannot take a plugin whose repo is private. The
+user decided four things that day:
+
+- The catalog accepts closed-source plugins. Their packages live in a separate public releases
+  repo, named by a new `releaseRepository` field (C5).
+- QGC labels each plugin "Open source" or "Closed source". "Open source" needs a public
+  `repository` and an OSI-approved license, and QGC links to the repository (C5).
+- A maintainer can mark a version "Verified" after reviewing its source. An open-source plugin is
+  never verified on its own. For a closed-source plugin, the owner gives the maintainer read access
+  to the source (C6).
+- The maintainer builds a verified package from the reviewed commit. GitHub build attestations
+  stay an option until the coordinating plan's S6 answers.
+
+Next: `/implement-unit plans/plugin-catalog.md C5`. Run settings: Sonnet · high · off.
 
 ## Goal & summary
 
 This repo is the QGroundControl plugin catalog. Each plugin has one JSON file under `plugins/`. A
 developer adds or updates their file through a PR. CI checks every PR. A merge to `main` rebuilds
 `index.json` and publishes it to GitHub Pages, where QGC reads it.
+
+Each plugin is open source or closed source. A maintainer can review a version's source, open or
+closed, and mark that version verified. Users see both facts before they install.
 
 The coordinating plan is `~/.claude/local/qgroundcontrol/plans/plugin-catalog.md`. It owns the
 order across repos and the whole-change acceptance. QDrive's release pipeline is in
@@ -60,7 +60,11 @@ order across repos and the whole-change acceptance. QDrive's release pipeline is
 #### Layout
 
 - `plugins/<id>.json` — one entry per plugin. The file name equals the entry's `id`.
-- `schema/entry.schema.json` and `schema/index.schema.json` — JSON Schema. They must match the
+- `verifications/<id>.json` — the maintainer's verification records for one plugin (C6). Only a
+  maintainer changes them.
+- `MAINTAINERS` — the GitHub logins of the maintainers, one per line (C6).
+- `schema/entry.schema.json`, `schema/index.schema.json` and `schema/verification.schema.json`
+  (C6) — JSON Schema. They must match the
   coordinating plan's "The index is the contract" section, which QGC's `PluginCatalog` parser
   also implements.
 - `tools/validate_entry.py` — the PR checks.
@@ -86,11 +90,35 @@ The entry schema is strict: it rejects unknown fields, so a typo fails CI. QGC i
 ignores unknown fields. A new field therefore goes into the schema first, and older QGC builds keep
 working.
 
+#### Additions for closed source and verification
+
+All are additive. QGC already reads `repository` as optional (`PluginCatalog.cc:189`) and hides
+the "Repository:" line when it is empty.
+
+- **Entry `releaseRepository` (C5, optional):** `https://github.com/<owner>/<repo>`, a public repo
+  whose release assets hold the packages. When it is present, package URLs must be release assets
+  of it. Otherwise they must be release assets of `repository`.
+- **Entry `repository` becomes optional (C5).** An entry needs `repository`, `releaseRepository`
+  or both. `repository` means "the public source of this plugin". So it is present only for an
+  open-source plugin.
+- **Open source (C5):** an entry with `repository` must have a `license` that is an OSI-approved
+  SPDX id, and its `repository` must be a public GitHub repo. A plugin with public source and a
+  license that is not OSI-approved leaves out `repository`, and QGC calls it closed source. QGC
+  therefore derives the label from one fact: `repository` is not empty.
+- **Package `verified` (C6, index only):** `reviewer` (a GitHub login), `date`, `method`
+  (`maintainer-build`, or `attestation` if S6 says go). `build_index.py` adds it to a package when a
+  verification record lists that version, that platform key and the same `sha256`, and the record
+  is not revoked. Authors never write it.
+
 #### What CI checks on every PR
 
 - The entry matches the schema, and the file name equals its `id`.
-- Every package URL uses HTTPS and points to a release asset in the entry's own `repository`:
+- Every package URL uses HTTPS and points to a release asset in the entry's own
+  `releaseRepository`, or in `repository` when there is no `releaseRepository`:
   `https://github.com/<owner>/<repo>/releases/download/...`.
+- An entry with `repository` has an OSI-approved `license`, and the repository is public (C5).
+- A change under `verifications/` comes from a maintainer, in a PR that changes nothing under
+  `plugins/`. Each record matches a version and package hash in the entry (C6).
 - CI downloads each package. Its size is under the cap and equals `size`. Its SHA-256 equals
   `sha256`.
 - CI opens the zip and reads `qgcplugin.json`. Its `id`, `version`, `tier`, `apiVersion` and host
@@ -106,8 +134,34 @@ working.
 #### Review
 
 A passing CI run is required, but it is not enough. For a new plugin, the maintainer checks the
-author, the source repository, and that the release comes from that source. In v1, an update from
-the same author still gets a maintainer review.
+author. For an open-source plugin, the maintainer also checks that `repository` is the plugin's
+real source. In v1, an update from the same author still gets a maintainer review.
+
+This entry review does not read the code, and it never makes a plugin verified.
+
+#### Verification
+
+Verification is a separate, later review of one version. It means that a maintainer read the
+source of that version and found nothing malicious. It does not mean the plugin has no bugs.
+
+- **It covers one version and its exact packages.** A record lists the version, each platform key
+  with its `sha256`, the source commit, the method, the reviewer and the date. An update is not
+  verified until a maintainer reviews it.
+- **The package must come from the reviewed code.** With `maintainer-build`, the maintainer builds
+  the package from the reviewed commit. The author publishes that exact file as the release
+  asset, so the entry's `sha256` equals the maintainer's build. The author therefore asks for
+  verification before the release. With `attestation`, a GitHub build attestation ties the hash to
+  the commit and the workflow. C6 accepts `attestation` only if S6 says go.
+- **The review covers everything that builds the package:** the source, the build workflow,
+  anything CMake downloads, and any bundled binary.
+- **Closed source:** the owner adds the maintainer as a read-only collaborator on the private repo,
+  and can remove that access after the review. The record keeps the commit SHA and no URL.
+  CONTRIBUTING states that the maintainer keeps the code private.
+- **A maintainer never verifies their own plugin.** The maintainer enforces this at review time.
+  CI cannot check it, because an entry's `author` is a display name and nothing links it to a
+  GitHub login. QDrive stays unverified for this reason.
+- **Revoking:** the maintainer adds `revoked` (a date and a reason) to the record. The record stays,
+  and `build_index.py` stops marking the package verified.
 
 #### Publishing
 
@@ -125,10 +179,24 @@ input. It adds `generated` and deploys to Pages at
 
 ## Risks & spikes
 
-This repo has no spike. The coordinating plan's S0 tests a GitHub Release download through QGC.
+This repo has no spike of its own. The coordinating plan owns every spike. Its S0 tests a GitHub
+Release download through QGC. Its S6 tests GitHub build attestations, and C6 waits for it.
 
 The main risk is CI downloading files from URLs that strangers write. The host allowlist, the
 read-only permissions and the absence of secrets limit it. C2 owns these checks.
+
+C5's public-repo check calls the GitHub API with no login, which allows 60 requests per hour from
+one IP address. GitHub-hosted runners share addresses, so other jobs may spend that limit. A
+rate-limit response must fail with "rate limited, re-run", never with "private". This is not
+measured.
+
+**CI is not the trust boundary; the maintainer's merge is.** A `pull_request` run uses the PR's own
+copy of `validate.yml`. Only the script and its dependencies come from the base branch. So a PR can
+edit the workflow, skip the checks, or set the environment variable that carries the author's
+login. This already holds for C2's checks. C6 therefore makes a branch-protection rule on `main`
+the boundary: every merge needs a CODEOWNERS review. CODEOWNERS names the maintainers for
+`MAINTAINERS`, `verifications/`, `.github/`, `tools/` and `schema/`. The CI maintainer check is a
+second layer that catches mistakes. It does not stop a PR that edits the workflow.
 
 ## Units
 
@@ -196,6 +264,64 @@ read-only permissions and the absence of secrets limit it. C2 owns these checks.
   installs through "Install plugin…" on macOS and shows its contribution.
 - **Run settings:** Sonnet · low · off.
 
+### C5 — Closed-source entries and the open-source rule
+
+- **Scope:** the optional `releaseRepository` field, `repository` made optional, and the rule that
+  an entry needs one of the two. Package URLs bind to `releaseRepository` when it is present. An
+  entry with `repository` needs an OSI-approved SPDX `license` and a public repository. Update the
+  README's entry format and "Publish a plugin", and CONTRIBUTING's review rules, including how to
+  list a closed-source plugin.
+- **Not in scope:** verification (C6). QGC's labels (coordinating plan U5).
+- **Files:** `schema/entry.schema.json`, `schema/index.schema.json`, `tools/validate_entry.py`,
+  `tools/build_index.py` (if it copies fields by name), new `tools/vendor/osi-licenses.json`, their
+  tests, `README.md`, `CONTRIBUTING.md`.
+- **Depends on:** C4.
+- **The OSI list:** a pinned snapshot of the SPDX license list, filtered to `isOsiApproved` and
+  not `isDeprecatedLicenseId`. Record its source URL and date in the file, as
+  `tools/vendor/pack_plugin.py` records its commit. `license` must be one id from that list. A
+  compound expression such as `MIT OR Apache-2.0` is refused in v1.
+- **The public-repo check:** `GET https://api.github.com/repos/<owner>/<repo>` with no login must
+  return 200 with `"private": false`. A 404 means private or missing, and both fail. A 403 or 429
+  for the rate limit fails with a message to re-run, never as "private". Run it only for an entry
+  the PR adds or changes, so an unchanged entry never fails on a network error.
+- **Done means:** tests pass, including each refusal: no `repository` and no `releaseRepository`;
+  a package URL outside `releaseRepository`; a package URL in `repository` when
+  `releaseRepository` is set; `repository` with the license `Proprietary`; `repository` with a
+  compound or deprecated license id; `repository` with a private or missing repo. A rate-limit
+  response gives the re-run message. A closed-source entry with only `releaseRepository` passes. The
+  committed hello-qml entry still passes. The review is clean.
+- **Run settings:** Sonnet · high · off. The review uses Opus, because the URL rule decides where
+  CI downloads from.
+
+### C6 — Verification records
+
+- **Scope:** `verifications/<id>.json`, its schema, the `MAINTAINERS` file, the validator's
+  maintainer rule, and `build_index.py` adding `verified` to packages. Update CONTRIBUTING with the
+  verification process from "Verification" above, for open and closed source. Also correct its
+  claim that "a PR that changes the validator is judged by the old one". A PR can edit
+  `validate.yml` itself, so the maintainer's review is what stops it.
+- **Not in scope:** QGC's display (coordinating plan U5). Verifying any real plugin.
+- **Files:** new `schema/verification.schema.json`, new `MAINTAINERS`, `CODEOWNERS`,
+  `tools/validate_entry.py`, `tools/build_index.py`, `schema/index.schema.json`,
+  `.github/workflows/validate.yml` (pass the PR author's login to the script through `env`), their
+  tests, `README.md`, `CONTRIBUTING.md`.
+- **The trust boundary:** branch protection on `main` that requires a CODEOWNERS review, as Risks
+  describes. The user turns it on in Settings; C6 confirms it through the API.
+- **Depends on:** C5 and the coordinating plan's S6. S6 decides whether `method` allows
+  `attestation`.
+- **The record:** `id`, and `versions`, a list. Each item has `version`, `packages` (platform key
+  to `sha256`), `sourceCommit` (40 hex characters), `method`, `reviewer`, `date`, and optional
+  `revoked` (`date`, `reason`).
+- **Done means:** tests pass, including each refusal: a `verifications/` change from a login not in
+  the base branch's `MAINTAINERS`; a PR that changes `plugins/` and `verifications/` together; a
+  record for an id or version the entry lacks; a `sha256` that differs from the entry's package; a
+  `reviewer` not in `MAINTAINERS`; an edit to an existing record other than adding `revoked`; a
+  `verified` field written into an entry by its author. The index marks a matching package
+  verified, and drops the mark when the record is revoked. A deliberately bad PR from a
+  non-maintainer shows red on GitHub. `CODEOWNERS` covers the protected paths, and the branch
+  protection rule requires its review. The review is clean.
+- **Run settings:** Opus · high · on. The maintainer rule is the trust boundary for "Verified".
+
 ## Change acceptance
 
 The coordinating plan owns the whole-change acceptance. This repo's part:
@@ -204,6 +330,10 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 2. The Pages URL serves an `index.json` that validates against schema v1 and lists the sample and
    QDrive.
 3. No workflow uses `pull_request_target`, and no PR run has a secret.
+4. A closed-source entry with only `releaseRepository` passes CI. An entry that claims open source
+   with a license that is not OSI-approved, or with a private repository, fails.
+5. Only a maintainer can add or revoke a verification, and the index marks a package verified
+   only when a record matches its hash.
 
 ## Execution order and progress
 
@@ -212,6 +342,8 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 - [x] **C3** — index build and Pages publishing — [Sonnet · medium · off] — 2026-10-03
 - [x] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off] — 2026-10-03
   (release, Pages and the macOS install confirmed)
+- [ ] **C5** — closed-source entries and the open-source rule — [Sonnet · high · off]
+- [ ] **C6** — verification records (waits for S6) — [Opus · high · on]
 
 ## Open questions
 
@@ -222,8 +354,16 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
     architecture.
   - **How CI gets `pack_plugin.py`:** a pinned copy at `tools/vendor/pack_plugin.py`.
   - **Rules for plugin ids:** none beyond the schema's pattern. The reviewer checks the id.
+- Decided 2026-10-03 for C5 and C6:
+  - **"Open source" needs an OSI-approved license** and a public repository, and QGC links to it.
+  - **Linking a package to its source:** the maintainer builds the package. `attestation` waits
+    for S6.
+  - **A maintainer never verifies their own plugin.** QDrive stays unverified.
 
 **Deferred past this change**
 
 - **Moving the repo to the `mavlink` GitHub org.** It depends on the coordinating plan's S1.
-- **A signed index, download counts, more maintainers.** Later growth.
+- **A signed index, download counts, more maintainers.** Later growth. With one maintainer, only
+  other authors' plugins can be verified.
+- **Warning users who installed a version whose verification was revoked.** QGC shows the version
+  as not verified, and gives no alert.
