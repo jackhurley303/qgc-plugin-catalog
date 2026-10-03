@@ -26,17 +26,16 @@ Three steps wait for the user, in this order:
   index. Only then does C3's "the Pages URL serves `index.json`" hold. Also confirm that the
   `github-pages` environment limits deploys to `main`.
 
-C4 built 2026-10-03: `samples/hello-qml/`, `plugins/io.github.jackhurley303.hello-qml.json` and one
-test that builds the index from the committed `plugins/`. The zip is 1210 bytes with SHA-256
+C4 shipped 2026-10-03: `samples/hello-qml/`, `plugins/io.github.jackhurley303.hello-qml.json` and
+one test that builds the index from the committed `plugins/`. The zip is 1210 bytes with SHA-256
 `6afe4a44…cbd30`. `pack_plugin.py` output is deterministic, so a repack gives the same hash.
-Four steps wait for the user, in this order:
+C2, C3 and C4 are pushed to `main`, the release `hello-qml-v1.0.0` exists, and Pages is on.
+`Publish index` ran green for `8e6b00e`, and the Pages `index.json` lists the sample. On macOS the
+user installed it from the Browse tab. The Installed tab showed it Active, and the Tool menu
+showed its page. Two C2 and C3 checks still wait for the user:
 
-- Push C2, C3 and C4 to `main`, with Pages enabled (see C3 above). The entry's URL does not exist
-  until step 2, so push the sample and the entry only after the release, or expect one red run.
-- Create the release from the zip. The command is in the C4 hand-off message. Use that exact zip.
-- Open the entry's PR, or push it, and confirm `Validate entries` is green.
-- Confirm Pages lists the sample, then install the zip through "Install plugin…" on macOS and see
-  "Hello QML" in the Tool menu. Only then does C4's "Done means" hold.
+- Open a deliberately bad test PR and confirm `Validate entries` shows red. Then close the PR.
+- Confirm the `github-pages` environment limits deploys to `main`.
 
 Next: the coordinating plan's next row, which sits in
 `~/.claude/local/qgroundcontrol/plans/plugin-catalog.md`. Run `/lc-status` there.
@@ -207,7 +206,7 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 - [x] **C2** — PR validator — [Opus · medium · on] — 2026-10-03
 - [x] **C3** — index build and Pages publishing — [Sonnet · medium · off] — 2026-10-03
 - [x] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off] — 2026-10-03
-  (built; the release, merge, Pages and install checks wait for the user)
+  (release, Pages and the macOS install confirmed)
 
 ## Open questions
 
