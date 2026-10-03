@@ -32,10 +32,15 @@ one test that builds the index from the committed `plugins/`. The zip is 1210 by
 C2, C3 and C4 are pushed to `main`, the release `hello-qml-v1.0.0` exists, and Pages is on.
 `Publish index` ran green for `8e6b00e`, and the Pages `index.json` lists the sample. On macOS the
 user installed it from the Browse tab. The Installed tab showed it Active, and the Tool menu
-showed its page. Two C2 and C3 checks still wait for the user:
+showed its page.
 
-- Open a deliberately bad test PR and confirm `Validate entries` shows red. Then close the PR.
-- Confirm the `github-pages` environment limits deploys to `main`.
+The last two C2 and C3 checks passed on 2026-10-03:
+
+- Test PR #1 added an entry with an all-zero `sha256`. `Validate entries` failed with "has
+  SHA-256 6afe4a44…cbd30, not 0000…0000", and `test` passed. The PR was closed unmerged and its
+  branch deleted.
+- The `github-pages` environment has one custom deployment branch policy, `main`.
+  `can_admins_bypass` is `true`, so a repo admin can still deploy from another branch.
 
 Next: the coordinating plan's next row, which sits in
 `~/.claude/local/qgroundcontrol/plans/plugin-catalog.md`. Run `/lc-status` there.
