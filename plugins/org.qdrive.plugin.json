@@ -1,0 +1,28 @@
+{
+  "id": "org.qdrive.plugin",
+  "name": "Q-Drive",
+  "author": "Q-Drive",
+  "summary": "Cloud storage and sharing of flight data.",
+  "description": "Syncs flight logs, mission plans, parameters and videos to the cloud and shares them with groups. Adds a Q-Drive page to the Tool menu and panels to the Fly and Plan views.",
+  "license": "Proprietary",
+  "releaseRepository": "https://github.com/jackhurley303/qdrive-releases",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "tier": "sdk",
+      "apiVersion": 2,
+      "hostVersion": {
+        "min": "5.0",
+        "max": ""
+      },
+      "released": "2026-10-03",
+      "packages": {
+        "macos-universal": {
+          "url": "https://github.com/jackhurley303/qdrive-releases/releases/download/v1.0.0/org.qdrive.plugin-1.0.0.qgcplugin",
+          "sha256": "cfb55e0cad510073afcf4cb515ffab455b86c5de26c4b7b90c19ed2fe53a9f8a",
+          "size": 2292396
+        }
+      }
+    }
+  ]
+}
