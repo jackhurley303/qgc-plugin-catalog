@@ -61,7 +61,7 @@ closed, and mark that version verified. Users see both facts before they install
 
 The coordinating plan is `~/.claude/local/qgroundcontrol/plans/plugin-catalog.md`. It owns the
 order across repos and the whole-change acceptance. QDrive's release pipeline is in
-`plugins/qdrive/plans/plugin-catalog.md` in the QGC fork.
+`plugins/qdrive/plans/archive/plugin-catalog.md` in the QGC fork.
 
 ## Architecture / approach
 
