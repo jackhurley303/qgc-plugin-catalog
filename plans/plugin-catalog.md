@@ -70,20 +70,22 @@ into `pr/`, beside `base/`. Second, a stranger could add their login to `MAINTAI
 PR. A `MAINTAINERS` change now needs a maintainer as author. The reviewer's own probe script now
 fails in CI and in the build.
 
-Next, in this order, to finish C6:
+C6 shipped 2026-10-03 as `e477d66`, pushed straight to `main`. As a PR it would have failed: its
+new `validate.yml` passes `--author`, which the base branch's old script did not accept.
 
-1. The user commits C6 and pushes it straight to `main`, as for C2 to C5. As a PR it would fail:
-   its new `validate.yml` passes `--author` to the base branch's old script, which does not know
-   it. A push does not run `validate.yml`.
-2. The user turns on branch protection for `main`: "Require a pull request before merging" and
-   "Require review from Code Owners". Admin bypass stays on, because the one maintainer cannot
-   approve their own PR. Then read it back with
-   `gh api repos/jackhurley303/qgc-plugin-catalog/branches/main/protection`.
-3. The red PR from a non-maintainer. Push a throwaway branch `c6-check-base` from `main` whose
-   `MAINTAINERS` lists another login. Open a PR into it that adds a record for an existing entry
-   and version, with the right `sha256`, so that no other error fires first. `Validate entries`
-   must fail with "not in the base branch's MAINTAINERS". Close the PR and delete both branches.
-4. Tick C6. Then U5 runs in the coordinating plan.
+- **Branch rule:** the ruleset "main protection" is active on the default branch. It blocks
+  deletion and force pushes, and requires a PR with one code-owner approval and the `validate`
+  and `test` checks. Repository admins bypass it, because the one maintainer cannot approve their
+  own PR. Read back through `gh api repos/jackhurley303/qgc-plugin-catalog/rulesets`.
+- **Red PR:** PR #3 added a correct hello-qml record against a throwaway base whose `MAINTAINERS`
+  listed only `someone-else`. `Validate entries` failed with "verifications/: 'jackhurley303' is
+  not in the base branch's MAINTAINERS; only a maintainer changes verifications/". `test` failed
+  too, on `test_committed_maintainers_lists_the_catalog_owner`, which the changed base causes. The
+  PR was closed and both branches deleted.
+
+Next: U5 in the coordinating plan,
+`/implement-unit ~/.claude/local/qgroundcontrol/plans/plugin-catalog.md U5`, Sonnet · medium · off.
+This catalog plan has no rows left. Its acceptance is part of the coordinating plan's E1.
 
 ## Goal & summary
 
@@ -434,8 +436,8 @@ The coordinating plan owns the whole-change acceptance. This repo's part:
 - [x] **C4** — qml-tier sample plugin and the first entry — [Sonnet · low · off] — 2026-10-03
   (release, Pages and the macOS install confirmed)
 - [x] **C5** — closed-source entries and the open-source rule — [Sonnet · high · off] — 2026-10-03
-- [ ] **C6** — verification records — [Opus · high · on] — code in place 2026-10-03; the push,
-  branch protection and the red PR wait (see Status)
+- [x] **C6** — verification records — [Opus · high · on] — 2026-10-03 (ruleset and red PR #3
+  confirmed)
 
 ## Open questions
 
