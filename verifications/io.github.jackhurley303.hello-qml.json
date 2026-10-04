@@ -1,0 +1,15 @@
+{
+  "id": "io.github.jackhurley303.hello-qml",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "packages": {
+        "any": "6afe4a4401df37a3c50e2e08d3a48277e416b1f91386eb43799b72d9ebbcbd30"
+      },
+      "sourceCommit": "8e6b00e7c2d1f0a4b3c5d6e7f8091a2b3c4d5e6f",
+      "method": "maintainer-build",
+      "reviewer": "jackhurley303",
+      "date": "2026-10-04"
+    }
+  ]
+}
