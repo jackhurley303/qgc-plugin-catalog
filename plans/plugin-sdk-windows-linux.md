@@ -5,7 +5,8 @@
 
 ## Status — current position / next step
 
-Planning finished 2026-10-26. No row has run. The plan doc is not committed yet.
+CA1 has not run. The coordinating plan's K1 measured the header layout on 2026-10-26, which changed
+CA1's reader from a raw byte scan to a per-format section read.
 
 This plan runs inside one run with the coordinating plan and the QDrive plan. Its single row, CA1,
 sits after the coordinating plan's U2 in that plan's Execution order. The commands are in the
@@ -40,13 +41,22 @@ vendored packer, `tools/vendor/pack_plugin.py`, is refreshed from the QGC fork's
 
 An entry's `qtVersion` must equal the build Qt major and minor read from each sdk-tier package's
 binary. The validator already downloads each package to check its SHA-256. It then finds the binary
-under `bin/<key>/` and reads the Qt metadata header that follows the `QTMETADATA !` magic. The
-coordinating plan's K1 writes the header layout into that plan's Carried forward. A package whose
-binary disagrees with the entry is refused, with both values in the error.
+under `bin/<key>/` and reads its Qt metadata header. A package whose binary disagrees with the entry
+is refused, with both values in the error.
 
-The scan reads raw bytes, so it works the same on Mach-O, ELF and PE files. A universal dylib holds
-one header per slice. Every match must give the same Qt version, or the package is refused. No
-match at all is refused too.
+K1 measured the header (the coordinating plan's Carried forward, "The Qt metadata header"). It is
+four bytes, and where they sit depends on the format, so the reader parses each format's own
+section rather than scanning the whole file:
+
+- **Mach-O:** after the `QTMETADATA !` magic in `__TEXT,qtmetadata`, one per slice of a universal
+  dylib.
+- **ELF:** the descriptor of the `qt-project!` note (type `0x74510001`) in `.note.qt.metadata`. No
+  magic precedes it, and a real x86-64 plugin holds two stray `QTMETADATA !` strings elsewhere.
+- **PE:** written from Qt's `qplugin.h`, since K1 did not measure a DLL. K2 runs the reader on a real
+  Windows DLL; a mismatch becomes a fix row.
+
+Every header found must give the same Qt version, or the package is refused. No header at all is
+refused too.
 
 The field stays optional. The QDrive 1.0.0 entry lacks it, and so will 1.0.1, which the plugin-catalog
 plan's E1 releases. `build_index.py` copies it into the index when it is present.
@@ -85,8 +95,9 @@ None of its own. The header layout comes from the coordinating plan's K1.
 - **Done means:** tests pass. A `linux-arm64` package passes the schema, and `linux-armhf` is
   refused. A `qtVersion` on a qml-tier version is refused. A package whose binary claims Qt 6.13
   under an entry that says 6.12 is refused with both values. A version without `qtVersion` passes as
-  before. Byte fixtures cover a single header (as in ELF and PE), two agreeing headers (a universal
-  dylib), two disagreeing headers, and no header. The review is clean.
+  before. Byte fixtures cover an ELF note header, a PE header, two agreeing Mach-O slices (a
+  universal dylib), two disagreeing slices, an ELF file whose stray `QTMETADATA !` strings must be
+  ignored, and no header. The review is clean.
 - **Run settings:** Sonnet · medium.
 
 ## Change acceptance
