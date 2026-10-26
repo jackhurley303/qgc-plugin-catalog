@@ -9,6 +9,21 @@
   "repository": "https://github.com/jackhurley303/qgc-plugin-catalog",
   "versions": [
     {
+      "version": "1.1.0",
+      "tier": "qml",
+      "qmlApiVersion": 2,
+      "hostVersion": { "min": "5.0", "max": "" },
+      "released": "2026-10-25",
+      "notes": "Targets QML API level 2, the level of hosts after the 2026-10 upstream sync.",
+      "packages": {
+        "any": {
+          "url": "https://github.com/jackhurley303/qgc-plugin-catalog/releases/download/hello-qml-v1.1.0/hello-qml-1.1.0.zip",
+          "sha256": "8a157bf097dccc786cbc634f81e69a2bffa65bdc5104e1f8be4dde7a51ec9866",
+          "size": 1211
+        }
+      }
+    },
+    {
       "version": "1.0.0",
       "tier": "qml",
       "qmlApiVersion": 1,
