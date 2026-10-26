@@ -58,11 +58,18 @@
           }
         },
         "released": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "qtVersion": {
+          "description": "sdk tier only. The Qt major.minor each package binary is built against; the validator checks it against the binary. QGC hides a version built against a newer Qt than it runs.",
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$"
+        },
         "notes": { "type": "string" },
         "packages": {
           "type": "object",
           "minProperties": 1,
-          "propertyNames": { "enum": ["macos-universal", "windows-x64", "linux-x64", "any"] },
+          "propertyNames": {
+            "enum": ["macos-universal", "windows-x64", "linux-x64", "linux-arm64", "any"]
+          },
           "additionalProperties": { "$ref": "#/$defs/package" }
         }
       },
@@ -74,7 +81,8 @@
             "properties": {
               "packages": { "propertyNames": { "not": { "const": "any" } } }
             }
-          }
+          },
+          "else": { "properties": { "qtVersion": false } }
         }
       ]
     },

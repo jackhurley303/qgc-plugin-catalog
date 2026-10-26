@@ -8,6 +8,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import fixtures_qt as fx
 import pytest
 import validate_entry
 from validate_entry import DownloadError
@@ -395,7 +396,7 @@ def test_equal_versions_with_different_spelling_match():
 
 def _archive_errors(data: bytes) -> str:
     entry = _good("qml")
-    return "\n".join(validate_entry.archive_errors(data, entry, entry["versions"][0]))
+    return "\n".join(validate_entry.archive_errors(data, entry, entry["versions"][0], "any"))
 
 
 def _zip_with_symlink() -> bytes:
@@ -1027,3 +1028,132 @@ def test_symlinked_entry_file_is_refused(tmp_path):
     (plugins / f"{entry['id']}.json").symlink_to(target)
     errors = "\n".join(validate_entry.validate(plugins, None, fetch, FakeRepos()))
     assert f"{entry['id']}.json: is a symlink; plugins/ holds only regular files" in errors
+
+
+# --- qtVersion against the binary -------------------------------------------------------
+
+BINARIES = {
+    "macos-universal": ("libhello.dylib", lambda: fx.fat(fx.macho(6, 12), fx.macho(6, 12))),
+    "windows-x64": ("hello.dll", lambda: fx.pe(6, 12)),
+    "linux-x64": ("libhello.so", lambda: fx.elf(6, 12, stray=True)),
+}
+
+
+def _qt_entry(fetch: FakeFetch, binaries: dict[str, bytes], qt_version: str | None) -> dict:
+    """An sdk entry with one package per key, each holding the given binary."""
+    entry = _good("sdk")
+    version = entry["versions"][0]
+    template = version["packages"]["macos-universal"]
+    version["packages"] = {}
+    for key, binary in binaries.items():
+        package = dict(template, url=f"{SDK_RELEASES}/hello-{key}.zip")
+        version["packages"][key] = package
+        name = BINARIES[key][0]
+        fetch.serve(package, _zip(_sdk_manifest(), {f"bin/{key}/{name}": binary}))
+    if qt_version is not None:
+        version["qtVersion"] = qt_version
+    return entry
+
+
+@pytest.mark.parametrize("key", sorted(BINARIES))
+def test_matching_qt_version_passes_for_each_format(tmp_path, key):
+    fetch = FakeFetch()
+    entry = _qt_entry(fetch, {key: BINARIES[key][1]()}, "6.12")
+    assert _run(tmp_path, entry, fetch) == ""
+
+
+def test_version_without_qt_version_is_not_checked(tmp_path):
+    fetch = FakeFetch()
+    entry = _qt_entry(fetch, {"macos-universal": b"\xcf\xfa\xed\xfe"}, None)
+    assert _run(tmp_path, entry, fetch) == ""
+
+
+def test_binary_built_for_a_newer_qt_is_refused_with_both_values(tmp_path):
+    fetch = FakeFetch()
+    entry = _qt_entry(fetch, {"linux-x64": fx.elf(6, 13)}, "6.12")
+    errors = _run(tmp_path, entry, fetch)
+    assert "bin/linux-x64/libhello.so is built against Qt 6.13" in errors
+    assert "qtVersion is '6.12'" in errors
+
+
+def test_universal_dylib_with_disagreeing_slices_is_refused(tmp_path):
+    fetch = FakeFetch()
+    binary = fx.fat(fx.macho(6, 12), fx.macho(6, 13))
+    entry = _qt_entry(fetch, {"macos-universal": binary}, "6.12")
+    assert "Qt 6.12 but Mach-O slice 1" in _run(tmp_path, entry, fetch)
+
+
+def test_binary_without_a_header_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _qt_entry(fetch, {"linux-x64": fx.elf(6, 12, note=False, stray=True)}, "6.12")
+    assert "cannot read the Qt version from the binary" in _run(tmp_path, entry, fetch)
+
+
+def test_qt_version_needs_the_binary_under_the_package_key(tmp_path):
+    fetch = FakeFetch()
+    entry = _qt_entry(fetch, {"linux-x64": fx.elf(6, 12)}, "6.12")
+    package = entry["versions"][0]["packages"].pop("linux-x64")
+    entry["versions"][0]["packages"]["linux-arm64"] = package
+    assert "needs exactly one plugin binary under bin/linux-arm64/" in _run(tmp_path, entry, fetch)
+
+
+def test_qml_version_with_qt_version_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _qml_entry(fetch)
+    entry["versions"][0]["qtVersion"] = "6.12"
+    assert "'qtVersion' is for the sdk tier only" in _run(tmp_path, entry, fetch)
+
+
+# --- A member the zip cannot decompress --------------------------------------------------
+
+
+def _corrupt_member(name: str, content: bytes) -> bytes:
+    """A zip whose deflated member `name` has two damaged bytes in its compressed stream."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(name, content)
+    data = bytearray(buffer.getvalue())
+    start = data.find(name.encode()) + len(name)
+    data[start + 2] ^= 0xFF
+    data[start + 3] ^= 0xFF
+    return bytes(data)
+
+
+def test_corrupt_binary_member_is_refused_not_raised():
+    data = _corrupt_member("bin/linux-x64/libx.so", b"\x7fELF" + b"A" * 5000)
+    errors = validate_entry.qt_version_errors(data, "linux-x64", {"qtVersion": "6.12"})
+    assert len(errors) == 1
+    assert "bin/linux-x64/libx.so cannot be read from the zip" in errors[0]
+
+
+def test_corrupt_manifest_member_is_refused_not_raised():
+    data = _corrupt_member("qgcplugin.json", json.dumps(_qml_manifest()).encode() * 50)
+    entry = _good("qml")
+    errors = validate_entry.archive_errors(data, entry, entry["versions"][0], "any")
+    assert len(errors) == 1
+    assert "qgcplugin.json cannot be read from the zip" in errors[0]
+
+
+@pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+def test_binary_in_another_compression_method_is_refused_before_reading(method):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", method) as archive:
+        archive.writestr("bin/linux-x64/libx.so", b"\x7fELF" + b"A" * 5000)
+    data = bytearray(buffer.getvalue())
+    # Damage the compressed stream: bz2 raises OSError and lzma LZMAError if it is read.
+    start = data.find(b"libx.so") + len(b"libx.so")
+    for index in range(2, 12):
+        data[start + index] ^= 0xFF
+    errors = validate_entry.qt_version_errors(bytes(data), "linux-x64", {"qtVersion": "6.12"})
+    assert errors == [
+        f"bin/linux-x64/libx.so uses zip compression method {method}; packages use deflate"
+    ]
+
+
+def test_manifest_in_another_compression_method_is_refused_before_reading():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_BZIP2) as archive:
+        archive.writestr("qgcplugin.json", json.dumps(_qml_manifest()))
+    entry = _good("qml")
+    errors = validate_entry.archive_errors(buffer.getvalue(), entry, entry["versions"][0], "any")
+    assert errors == ["qgcplugin.json uses zip compression method 12; packages use deflate"]

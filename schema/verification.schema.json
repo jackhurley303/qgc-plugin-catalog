@@ -27,7 +27,7 @@
         "packages": {
           "type": "object",
           "minProperties": 1,
-          "propertyNames": { "enum": ["macos-universal", "windows-x64", "linux-x64", "any"] },
+          "propertyNames": { "enum": ["macos-universal", "windows-x64", "linux-x64", "linux-arm64", "any"] },
           "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
         },
         "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },

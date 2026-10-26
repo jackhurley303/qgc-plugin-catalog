@@ -5,8 +5,9 @@
 
 ## Status — current position / next step
 
-CA1 has not run. The coordinating plan's K1 measured the header layout on 2026-10-26, which changed
-CA1's reader from a raw byte scan to a per-format section read.
+CA1 shipped 2026-10-26: the `linux-arm64` key, the optional sdk-only `qtVersion`, and a validator
+that reads each package binary's Qt header per format. The PE reader is unmeasured until the
+coordinating plan's K2 runs it on a real DLL. This plan has no rows left.
 
 This plan runs inside one run with the coordinating plan and the QDrive plan. Its single row, CA1,
 sits after the coordinating plan's U2 in that plan's Execution order. The commands are in the
@@ -89,7 +90,9 @@ None of its own. The header layout comes from the coordinating plan's K1.
 - **Not in scope:** making `qtVersion` required; QDrive's entry (the QDrive plan's QD2).
 - **Files:** `schema/entry.schema.json`, `schema/verification.schema.json`,
   `schema/index.schema.json`, `tools/validate_entry.py`, `tools/build_index.py`,
-  `tools/vendor/pack_plugin.py`, `README.md`, `CONTRIBUTING.md`, the tests beside each.
+  `tools/vendor/pack_plugin.py`, `README.md`, `CONTRIBUTING.md`, the tests beside each. Shipped also
+  `tools/qt_metadata.py` (the reader), `tools/_bootstrap.py` (a byte copy the vendored packer
+  imports), `tests/fixtures_qt.py` and `tests/test_qt_metadata.py`.
 - **Depends on:** the coordinating plan's U1 (the key), K1 (the header layout) and U2 (the contract
   text).
 - **Done means:** tests pass. A `linux-arm64` package passes the schema, and `linux-armhf` is
@@ -104,14 +107,15 @@ None of its own. The header layout comes from the coordinating plan's K1.
 
 1. `python3 -m pytest tests` passes.
 2. `python3 tools/build_index.py . --out <dir> --generated <the published index's date>` over the
-   committed `plugins/` gives a file identical to the published `index.json`.
+   committed `plugins/` gives a file identical to the published `index.json`, fetched from the
+   catalog's Pages URL (the repo does not commit it).
 3. The negative cases in CA1's "Done means" each fail for their named reason.
 
 ## Execution order and progress
 
 The coordinating plan's Execution order places this row.
 
-- [ ] **CA1** — the `linux-arm64` key and the `qtVersion` field — [Sonnet · medium]
+- [x] **CA1** — the `linux-arm64` key and the `qtVersion` field — [Sonnet · medium] — shipped 2026-10-26
 
 ## Open questions
 

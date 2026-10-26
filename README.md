@@ -49,6 +49,9 @@ CI downloads each new package and checks it:
 - The zip's `qgcplugin.json` has the same `id`, `version`, `tier`, `apiVersion`, `qmlApiVersion`
   and `hostVersion` as the entry's version.
 - The package passes the SDK's `pack_plugin.py` rules.
+- When the version has `qtVersion`, the Qt major and minor in the binary under `bin/<key>/` equal it.
+  The validator reads the header from the binary's own Qt metadata section. It refuses a binary
+  with no header, and a universal dylib whose slices disagree.
 
 Check your entry before you open the PR. Install the tools first, as in "Develop" below:
 
@@ -130,12 +133,15 @@ Each item in `versions` has:
 - `tier` — `qml` or `sdk`.
 - `apiVersion` — an integer. Required for the `sdk` tier.
 - `qmlApiVersion` — an integer of 1 or more. For the `qml` tier only, and optional.
+- `qtVersion` — the Qt major and minor the package binaries are built against, such as `6.12`.
+  For the `sdk` tier only, and optional. QGC hides a version built against a newer Qt than it runs.
+  CI checks it against each package's binary.
 - `hostVersion` — `min` (required) and `max` (optional, may be empty). Both are dotted numbers.
 - `released` — a date, `YYYY-MM-DD`.
 - `notes` — optional text.
 - `packages` — a map from a platform key to `url`, `sha256` and `size`. The platform keys are
-  `macos-universal`, `windows-x64` and `linux-x64`. The key `any` is for the `qml` tier only.
-  `sha256` is 64 lowercase hex characters. `url` starts with `https://`. In `index.json`, a
+  `macos-universal`, `windows-x64`, `linux-x64` and `linux-arm64`. The key `any` is for the `qml`
+  tier only. `sha256` is 64 lowercase hex characters. `url` starts with `https://`. In `index.json`, a
   package can also carry `verified` (`reviewer`, `date`, `method`). The catalog adds it; an entry
   in `plugins/` never has it, and CI refuses one that does.
 

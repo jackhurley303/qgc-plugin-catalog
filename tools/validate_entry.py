@@ -17,8 +17,12 @@ entry leaves out `repository` and names `releaseRepository`, a public repository
 only the release packages.
 
 The package rules come from tools/vendor/pack_plugin.py, a pinned copy of the plugin SDK's
-tools/pack_plugin.py (QGroundControl fork, commit cd6d7b0bdcb6df144629015b4c0918963080ab97).
-Copy it again byte for byte when the SDK's rules change.
+tools/pack_plugin.py (QGroundControl fork, commit 5cc212a16a2a9e099dd098d67d5b08fcb34cc82e).
+Copy it again byte for byte when the SDK's rules change. It imports the fork's _bootstrap.py,
+which sits beside this script as another byte-for-byte copy.
+
+A version with `qtVersion` has its binary's Qt version read from the binary and compared;
+tools/qt_metadata.py does the reading.
 
 The maintainer's verification records in verifications/ are checked by tools/verification.py.
 The pull request author's login comes in through --author.
@@ -44,12 +48,14 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
+import zlib
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import unquote, urlsplit
 
+import qt_metadata
 import verification
 from jsonschema import Draft202012Validator
 from vendor import pack_plugin
@@ -69,11 +75,30 @@ MAX_PACKAGE_BYTES = 50 * 1024 * 1024
 # qgcplugin.json is a small text file. A bigger one is a mistake or a zip bomb.
 MAX_MANIFEST_BYTES = 1024 * 1024
 
+# The binary is decompressed to read its Qt metadata header. A QDrive binary is about 3 MB.
+MAX_BINARY_BYTES = 128 * 1024 * 1024
+
 DOWNLOAD_TIMEOUT_SECONDS = 60
 DOWNLOAD_CHUNK_BYTES = 64 * 1024
 
 # QVersionNumber stores each segment as an int, so a segment is limited to 9 digits.
 _PLAIN_VERSION_RE = re.compile(r"^[0-9]{1,9}(\.[0-9]{1,9})*$")
+
+
+# What zipfile raises for a member it cannot decompress: a corrupt deflate stream, a bad CRC,
+# an encrypted member, or a compression method it does not support.
+_UNREADABLE_MEMBER = (
+    zipfile.BadZipFile,
+    zlib.error,
+    RuntimeError,
+    NotImplementedError,
+    EOFError,
+)
+
+# tools/vendor/pack_plugin.py writes every member deflated. zipfile also decompresses bzip2
+# and lzma, and those decoders raise their own errors on a damaged stream, so a member in any
+# other method is refused before it is read.
+_READABLE_METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 
 
 class DownloadError(Exception):
@@ -119,6 +144,8 @@ def schema_errors(entry: object) -> list[str]:
         if error.validator == "anyOf" and not error.path:
             # The stock message for this rule repeats the whole entry.
             message = "an entry needs 'repository' or 'releaseRepository', or both"
+        elif error.validator is None and "else" in error.schema_path:
+            message = "'qtVersion' is for the sdk tier only; a qml version has no binary to read"
         else:
             message = error.message
         errors.append(f"{error.json_path}: {message}")
@@ -446,8 +473,63 @@ def _manifest_mismatches(manifest: dict, entry: dict, version: dict) -> list[str
     return errors
 
 
-def archive_errors(data: bytes, entry: dict, version: dict) -> list[str]:
-    """Open the package without extracting it. Only qgcplugin.json is decompressed."""
+def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo, limit: int) -> bytes | str:
+    """At most limit + 1 bytes of the member, or the reason it cannot be read."""
+    if info.compress_type not in _READABLE_METHODS:
+        return (
+            f"{info.filename} uses zip compression method {info.compress_type}; "
+            "packages use deflate"
+        )
+    try:
+        with archive.open(info) as stream:
+            return stream.read(limit + 1)
+    except _UNREADABLE_MEMBER as exc:
+        return f"{info.filename} cannot be read from the zip: {exc}"
+
+
+def qt_version_errors(data: bytes, key: str, version: dict) -> list[str]:
+    """The binary under bin/<key>/ must be built against the Qt that `qtVersion` names.
+
+    The entry's `qtVersion` is what QGC compares with its own Qt before it offers the version.
+    A value the binary does not match would hide a good build or offer a broken one, so the
+    value is read from the binary's own metadata header (tools/qt_metadata.py), not trusted.
+    A version without `qtVersion` is not checked.
+    """
+    declared = version.get("qtVersion")
+    if declared is None:
+        return []
+    prefix = f"bin/{key}/"
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        binaries = [
+            info
+            for info in archive.infolist()
+            if info.filename.startswith(prefix)
+            and info.filename.count("/") == 2
+            and info.filename.endswith(pack_plugin.BINARY_SUFFIXES)
+        ]
+        if len(binaries) != 1:
+            return [f"qtVersion '{declared}' needs exactly one plugin binary under {prefix}"]
+        info = binaries[0]
+        if info.file_size > MAX_BINARY_BYTES:
+            return [f"{info.filename} is over {MAX_BINARY_BYTES} bytes; its Qt version is not read"]
+        binary = _read_member(archive, info, MAX_BINARY_BYTES)
+        if isinstance(binary, str):
+            return [binary]
+    try:
+        major, minor = qt_metadata.qt_version(binary)
+    except qt_metadata.MetadataError as exc:
+        return [f"{info.filename}: cannot read the Qt version from the binary: {exc}"]
+    if f"{major}.{minor}" != declared:
+        return [
+            f"{info.filename} is built against Qt {major}.{minor}, but the entry's "
+            f"qtVersion is '{declared}'"
+        ]
+    return []
+
+
+def archive_errors(data: bytes, entry: dict, version: dict, key: str) -> list[str]:
+    """Open the package without extracting it. Only qgcplugin.json is decompressed, and the
+    binary when the version names a `qtVersion`."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
@@ -476,8 +558,9 @@ def archive_errors(data: bytes, entry: dict, version: dict) -> list[str]:
         if manifest_info.file_size > MAX_MANIFEST_BYTES:
             return [f"{pack_plugin.MANIFEST_FILENAME} is over {MAX_MANIFEST_BYTES} bytes"]
         # Read one byte past the cap: the size in the zip header can lie.
-        with archive.open(manifest_info) as stream:
-            manifest_bytes = stream.read(MAX_MANIFEST_BYTES + 1)
+        manifest_bytes = _read_member(archive, manifest_info, MAX_MANIFEST_BYTES)
+        if isinstance(manifest_bytes, str):
+            return [manifest_bytes]
         if len(manifest_bytes) > MAX_MANIFEST_BYTES:
             return [f"{pack_plugin.MANIFEST_FILENAME} is over {MAX_MANIFEST_BYTES} bytes"]
 
@@ -508,10 +591,13 @@ def archive_errors(data: bytes, entry: dict, version: dict) -> list[str]:
         pack_plugin.check_tier_layout(str(manifest["tier"]), manifest, files)
     except pack_plugin.PackError as exc:
         errors.append(str(exc))
+        return errors
+    if version["tier"] == "sdk":
+        errors.extend(qt_version_errors(data, key, version))
     return errors
 
 
-def package_errors(package: dict, entry: dict, version: dict, fetch: Fetch) -> list[str]:
+def package_errors(key: str, package: dict, entry: dict, version: dict, fetch: Fetch) -> list[str]:
     url = package["url"]
     errors = package_url_errors(url, release_source(entry))
     if errors:
@@ -534,7 +620,7 @@ def package_errors(package: dict, entry: dict, version: dict, fetch: Fetch) -> l
     if digest != package["sha256"]:
         return [f"the package at '{url}' has SHA-256 {digest}, not {package['sha256']}"]
 
-    return archive_errors(data, entry, version)
+    return archive_errors(data, entry, version, key)
 
 
 # --- The whole pull request -----------------------------------------------------------
@@ -622,7 +708,7 @@ def validate(
         for version in added_versions(old, entry):
             for key, package in sorted(version["packages"].items()):
                 where = f"{file_name}: version '{version['version']}' package '{key}'"
-                for error in package_errors(package, entry, version, fetch):
+                for error in package_errors(key, package, entry, version, fetch):
                     errors.append(f"{where}: {error}")
 
     errors.extend(duplicate_id_errors(valid))

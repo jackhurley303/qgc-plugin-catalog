@@ -22,6 +22,8 @@ A passing CI run is required. It is not enough. A maintainer reviews every PR.
   verification review (see "Verification" below).
 - For the `sdk` tier, the plugin runs native code in QGC. The maintainer reads the entry with
   that in mind.
+- For an `sdk` version with `qtVersion`, the value equals the Qt version in the binary's own
+  header. CI reads it, so the maintainer has nothing to compare by hand.
 
 **A plugin that claims open source** must have a public source repository. The maintainer checks
 that the `license` is the one the repository's own license file states. CI checks only that the

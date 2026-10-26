@@ -33,6 +33,8 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, NoReturn
 
+import _bootstrap as _bootstrap
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -43,9 +45,10 @@ MANIFEST_FILENAME = "qgcplugin.json"
 # which is what that ceiling actually measures.
 MAX_PACKAGE_BYTES = 512 * 1024 * 1024
 
-# QGCPluginLoader::platformBinarySubdir(). The documented per-platform key looked up first;
-# the loader also accepts any single binary under bin/<prefix>-* as a fallback.
-PLATFORM_KEYS = ("macos-universal", "windows-x64", "linux-x64")
+# QGCPluginLoader::platformBinarySubdir(). The loader looks only under its exact key; on macOS
+# it also accepts any single binary under bin/macos-*. windows-arm64 and android-* exist in
+# the loader only, so no package uses them yet.
+PLATFORM_KEYS = ("macos-universal", "windows-x64", "linux-x64", "linux-arm64")
 
 # QGCPluginLoader::pluginBinaryFilters(), flattened. Used to find what the loader would
 # consider a plugin binary under bin/.
@@ -340,14 +343,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="list what would be packed and exit")
     args = parser.parse_args(argv)
 
-    # A key outside the known set still resolves through the loader's bin/<prefix>-*
+    # A key outside the known set still resolves on macOS through the loader's bin/macos-*
     # fallback, so this is a warning rather than a rejection — a single-arch
     # bin/macos-x86_64/ is a legitimate layout the loader documents.
     if args.binary is not None and args.platform not in PLATFORM_KEYS:
         print(
             f"warning: '{args.platform}' is not a documented platform key "
-            f"({', '.join(PLATFORM_KEYS)}); the loader will find it only via its "
-            "bin/<platform>-* fallback",
+            f"({', '.join(PLATFORM_KEYS)}); only macOS finds it, via its "
+            "bin/macos-* fallback",
             file=sys.stderr,
         )
 

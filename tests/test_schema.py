@@ -335,3 +335,57 @@ def test_index_refuses_a_bad_entry():
     entry = _good("sdk")
     _drop_sha256(entry)
     assert _index_errors(_index(entry)) != []
+
+
+# --- linux-arm64 and qtVersion ----------------------------------------------------------
+
+
+def test_sdk_version_may_use_the_linux_arm64_key():
+    entry = _good("sdk")
+    packages = entry["versions"][0]["packages"]
+    packages["linux-arm64"] = copy.deepcopy(packages["windows-x64"])
+    assert _entry_errors(entry) == []
+
+
+def test_linux_armhf_key_is_refused():
+    entry = _good("sdk")
+    packages = entry["versions"][0]["packages"]
+    packages["linux-armhf"] = copy.deepcopy(packages["windows-x64"])
+    assert "'linux-armhf' is not one of" in "\n".join(_entry_errors(entry))
+
+
+def test_verification_record_accepts_linux_arm64_and_refuses_linux_armhf():
+    schema = _load(ROOT / "schema" / "verification.schema.json")
+    keys = schema["$defs"]["item"]["properties"]["packages"]["propertyNames"]["enum"]
+    assert "linux-arm64" in keys
+    assert "linux-armhf" not in keys
+
+
+def test_sdk_version_may_carry_qt_version():
+    entry = _good("sdk")
+    entry["versions"][0]["qtVersion"] = "6.12"
+    assert _entry_errors(entry) == []
+
+
+def test_qt_version_is_optional_on_an_sdk_version():
+    assert "qtVersion" not in _good("sdk")["versions"][0]
+    assert _entry_errors(_good("sdk")) == []
+
+
+def test_qml_version_with_qt_version_is_refused():
+    entry = _good("qml")
+    entry["versions"][0]["qtVersion"] = "6.12"
+    assert _entry_errors(entry) != []
+
+
+@pytest.mark.parametrize("value", ["6", "6.12.0", "v6.12", "", "6.x", 6.12])
+def test_malformed_qt_version_is_refused(value):
+    entry = _good("sdk")
+    entry["versions"][0]["qtVersion"] = value
+    assert _entry_errors(entry) != []
+
+
+def test_index_carries_qt_version():
+    entry = _good("sdk")
+    entry["versions"][0]["qtVersion"] = "6.12"
+    assert _index_errors(_index(entry)) == []

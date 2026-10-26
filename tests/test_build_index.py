@@ -343,3 +343,13 @@ def test_symlinked_verifications_dir_refuses_the_build(plugins: Path, tmp_path: 
     index, errors = build_index.build_index(plugins, GENERATED, tmp_path / "verifications")
     assert index is None
     assert errors == ["verifications/ must be a directory, not a symlink"]
+
+
+def test_qt_version_is_copied_into_the_index(tmp_path: Path):
+    entry = _good("sdk")
+    entry["versions"][0]["qtVersion"] = "6.12"
+    _write(tmp_path / "plugins", entry)
+    index, errors = build_index.build_index(tmp_path / "plugins", GENERATED)
+    assert errors == []
+    assert index is not None
+    assert index["plugins"][0]["versions"][0]["qtVersion"] == "6.12"

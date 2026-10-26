@@ -1,8 +1,9 @@
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-# A byte-identical copy of the plugin SDK's pack_plugin.py; see tools/validate_entry.py.
-extend-exclude = ["tools/vendor"]
+# Byte-identical copies of the plugin SDK's pack_plugin.py and the _bootstrap.py it imports;
+# see tools/validate_entry.py.
+extend-exclude = ["tools/vendor", "tools/_bootstrap.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
