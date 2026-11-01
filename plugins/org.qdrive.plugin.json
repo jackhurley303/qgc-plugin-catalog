@@ -23,6 +23,23 @@
           "size": 2292396
         }
       }
+    },
+    {
+      "version": "1.0.1",
+      "tier": "sdk",
+      "apiVersion": 2,
+      "hostVersion": {
+        "min": "5.0",
+        "max": ""
+      },
+      "released": "2026-11-01",
+      "packages": {
+        "macos-universal": {
+          "url": "https://github.com/jackhurley303/qdrive-releases/releases/download/v1.0.1/org.qdrive.plugin-1.0.1.qgcplugin",
+          "sha256": "b553af601e1207e9f3542e6ab32f00f1d88e9753a4b53046925a821ff7c0a845",
+          "size": 2264947
+        }
+      }
     }
   ]
 }
