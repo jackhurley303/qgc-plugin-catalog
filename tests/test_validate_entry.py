@@ -1104,6 +1104,143 @@ def test_qml_version_with_qt_version_is_refused(tmp_path):
     assert "'qtVersion' is for the sdk tier only" in _run(tmp_path, entry, fetch)
 
 
+# --- The binary against its platform key -----------------------------------------------
+
+ARM64 = 183
+X86_64 = 62
+
+
+def _key_entry(fetch: FakeFetch, key: str, binary: bytes, name: str = "libhello.so") -> dict:
+    """An sdk entry with one package under `key`, holding `binary`; no qtVersion."""
+    entry = _good("sdk")
+    version = entry["versions"][0]
+    package = dict(version["packages"]["macos-universal"], url=f"{SDK_RELEASES}/hello-{key}.zip")
+    version["packages"] = {key: package}
+    fetch.serve(package, _zip(_sdk_manifest(), {f"bin/{key}/{name}": binary}))
+    return entry
+
+
+@pytest.mark.parametrize(
+    ("key", "binary"),
+    [
+        ("android-arm64", lambda: fx.elf(6, 12, machine=ARM64, android=True)),
+        ("linux-arm64", lambda: fx.elf(6, 12, machine=ARM64)),
+        ("linux-x64", lambda: fx.elf(6, 12)),
+    ],
+)
+def test_binary_matching_its_key_passes(tmp_path, key, binary):
+    fetch = FakeFetch()
+    entry = _key_entry(fetch, key, binary())
+    assert _run(tmp_path, entry, fetch) == ""
+
+
+def test_android_arm64_package_with_qt_version_passes(tmp_path):
+    fetch = FakeFetch()
+    binary = fx.elf(6, 12, machine=ARM64, android=True)
+    entry = _key_entry(fetch, "android-arm64", binary)
+    entry["versions"][0]["qtVersion"] = "6.12"
+    assert _run(tmp_path, entry, fetch) == ""
+
+
+def test_glibc_binary_under_android_key_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _key_entry(fetch, "android-arm64", fx.elf(6, 12, machine=ARM64))
+    errors = _run(tmp_path, entry, fetch)
+    assert "bin/android-arm64/libhello.so" in errors
+    assert "is a Linux (glibc) binary, but key 'android-arm64' needs one built with" in errors
+
+
+def test_android_binary_under_linux_key_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _key_entry(fetch, "linux-arm64", fx.elf(6, 12, machine=ARM64, android=True))
+    errors = _run(tmp_path, entry, fetch)
+    assert "bin/linux-arm64/libhello.so" in errors
+    assert "is an Android (bionic) binary, but key 'linux-arm64' needs a Linux" in errors
+
+
+@pytest.mark.parametrize("key", ["android-arm64", "linux-arm64"])
+def test_x86_64_binary_under_an_arm64_key_is_refused(tmp_path, key):
+    fetch = FakeFetch()
+    entry = _key_entry(fetch, key, fx.elf(6, 12, android=key.startswith("android")))
+    errors = _run(tmp_path, entry, fetch)
+    assert f"is built for x86-64, but key '{key}' needs AArch64" in errors
+
+
+def test_arm64_binary_under_the_x64_key_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _key_entry(fetch, "linux-x64", fx.elf(6, 12, machine=ARM64))
+    assert "is built for AArch64, but key 'linux-x64' needs x86-64" in _run(tmp_path, entry, fetch)
+
+
+def test_android_binary_without_section_headers_is_refused(tmp_path):
+    fetch = FakeFetch()
+    binary = bytearray(fx.elf(6, 12, machine=ARM64, android=True))
+    binary[40:48] = b"\x00" * 8  # e_shoff = 0
+    entry = _key_entry(fetch, "android-arm64", bytes(binary))
+    assert "has no section headers" in _run(tmp_path, entry, fetch)
+
+
+@pytest.mark.parametrize(
+    ("junk", "reason"),
+    [
+        (b"", "is not a readable ELF file"),
+        (b"\x7fELF", "is not a readable ELF file"),
+        (b"not an elf" * 100, "is not a readable ELF file"),
+        (b"\x7fELF\x02\x01\x01" + b"\xff" * 200, "is built for machine 65535"),
+    ],
+)
+def test_malformed_binary_under_an_elf_key_is_refused_not_raised(tmp_path, junk, reason):
+    fetch = FakeFetch()
+    entry = _key_entry(fetch, "android-arm64", junk)
+    assert reason in _run(tmp_path, entry, fetch)
+
+
+def test_glibc_binary_outside_the_key_dir_is_refused(tmp_path):
+    fetch = FakeFetch()
+    entry = _key_entry(fetch, "android-arm64", b"")
+    package = entry["versions"][0]["packages"]["android-arm64"]
+    binary = fx.elf(6, 12, machine=ARM64)
+    fetch.serve(package, _zip(_sdk_manifest(), {"bin/linux-arm64/libhello.so": binary}))
+    errors = _run(tmp_path, entry, fetch)
+    assert (
+        "key 'android-arm64' needs a plugin binary under bin/android-arm64/, "
+        "but the binary is at bin/linux-arm64/libhello.so"
+    ) in errors
+
+
+def test_package_without_any_binary_is_refused_by_the_key_check():
+    errors = validate_entry.binary_key_errors(_zip(None, {"assets/a.txt": b"x"}), "linux-x64")
+    assert errors == [
+        "key 'linux-x64' needs a plugin binary under bin/linux-x64/, but the package has none"
+    ]
+
+
+def test_long_non_ascii_binary_name_is_refused_not_raised():
+    name = "bin/android-arm64/" + "\u4e2d" * 100 + ".so"
+    errors = validate_entry.binary_key_errors(_zip(None, {name: b"junk"}), "android-arm64")
+    assert len(errors) == 1
+    assert errors[0].startswith(name) and "is not a readable ELF file" in errors[0]
+
+
+def test_binary_with_an_unusual_name_is_refused_not_raised():
+    data = _zip(None, {"bin/android-arm64/lib\u00e9\x01.so": b"junk"})
+    errors = validate_entry.binary_key_errors(data, "android-arm64")
+    assert len(errors) == 1
+    assert "is not a readable ELF file" in errors[0]
+
+
+def test_key_without_a_packer_check_passes_any_binary():
+    data = _zip(None, {"bin/windows-x64/hello.dll": b"junk"})
+    assert validate_entry.binary_key_errors(data, "windows-x64") == []
+
+
+def test_corrupt_binary_member_is_refused_by_the_key_check():
+    data = _corrupt_member("bin/linux-x64/libx.so", b"\x7fELF" + b"A" * 5000)
+    errors = validate_entry.binary_key_errors(data, "linux-x64")
+    assert len(errors) == 1
+    assert "bin/linux-x64/libx.so cannot be read from the zip" in errors[0]
+
+
 # --- A member the zip cannot decompress --------------------------------------------------
 
 

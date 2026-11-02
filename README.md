@@ -49,6 +49,16 @@ CI downloads each new package and checks it:
 - The zip's `qgcplugin.json` has the same `id`, `version`, `tier`, `apiVersion`, `qmlApiVersion`
   and `hostVersion` as the entry's version.
 - The package passes the SDK's `pack_plugin.py` rules.
+- An `sdk` package holds its plugin binary (`.so`, `.dll`, `.dylib` or `.bundle`) directly under
+  `bin/<key>/` for the package's own key. This holds for every key. A package with no binary
+  there is refused, whether the binary sits elsewhere or is absent. QGC looks in `bin/<key>/`
+  first. Only on macOS does it also look in `bin/macos-*/`.
+- Under a `linux-*` or `android-*` key, the binary must be a readable ELF file. Its machine type
+  must match the key: `x64` is x86-64, `arm64` is AArch64. The check tells Android from Linux by
+  the `.note.android.ident` section, which the NDK linker writes. An `android-*` key requires
+  that section, and a `linux-*` key refuses it. For an `android-*` key,
+  keep the section headers in the binary, because the check reads them. The binaries of the
+  `macos-universal` and `windows-x64` keys are not checked against their key.
 - When the version has `qtVersion`, the Qt major and minor in the binary under `bin/<key>/` equal it.
   The validator reads the header from the binary's own Qt metadata section. It refuses a binary
   with no header, and a universal dylib whose slices disagree.
@@ -140,10 +150,10 @@ Each item in `versions` has:
 - `released` — a date, `YYYY-MM-DD`.
 - `notes` — optional text.
 - `packages` — a map from a platform key to `url`, `sha256` and `size`. The platform keys are
-  `macos-universal`, `windows-x64`, `linux-x64` and `linux-arm64`. The key `any` is for the `qml`
-  tier only. `sha256` is 64 lowercase hex characters. `url` starts with `https://`. In `index.json`, a
-  package can also carry `verified` (`reviewer`, `date`, `method`). The catalog adds it; an entry
-  in `plugins/` never has it, and CI refuses one that does.
+  `macos-universal`, `windows-x64`, `linux-x64`, `linux-arm64` and `android-arm64`. The key
+  `any` is for the `qml` tier only. `sha256` is 64 lowercase hex characters. `url` starts with
+  `https://`. In `index.json`, a package can also carry `verified` (`reviewer`, `date`, `method`).
+  The catalog adds it; an entry in `plugins/` never has it, and CI refuses one that does.
 
 The schema rejects any field it does not list, so a typo fails the check. QGC itself ignores
 unknown fields. A new field is therefore added to the schema first.

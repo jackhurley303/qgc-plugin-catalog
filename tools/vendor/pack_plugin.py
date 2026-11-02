@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import stat
 import sys
@@ -46,9 +47,22 @@ MANIFEST_FILENAME = "qgcplugin.json"
 MAX_PACKAGE_BYTES = 512 * 1024 * 1024
 
 # QGCPluginLoader::platformBinarySubdir(). The loader looks only under its exact key; on macOS
-# it also accepts any single binary under bin/macos-*. windows-arm64 and android-* exist in
+# it also accepts any single binary under bin/macos-*. windows-arm64 and android-x64 exist in
 # the loader only, so no package uses them yet.
-PLATFORM_KEYS = ("macos-universal", "windows-x64", "linux-x64", "linux-arm64")
+PLATFORM_KEYS = ("macos-universal", "windows-x64", "linux-x64", "linux-arm64", "android-arm64")
+
+# ELF e_machine values for the arch half of a linux-* or android-* key.
+_ELF_MACHINES = {"x64": 62, "arm64": 183}
+_ELF_MACHINE_NAMES = {62: "x86-64", 183: "AArch64"}
+
+# The NDK linker writes this section into every binary it links, and stripping keeps it.
+# Linux toolchains never write it, so it tells a bionic binary from a glibc one of the same
+# machine type. `libc.so` against `libc.so.6` in DT_NEEDED would also work but needs the
+# dynamic section parsed; the section name needs only the section headers.
+ANDROID_NOTE_SECTION = ".note.android.ident"
+
+_MAX_ELF_SECTIONS = 4096
+_MAX_SHSTRTAB_BYTES = 1024 * 1024
 
 # QGCPluginLoader::pluginBinaryFilters(), flattened. Used to find what the loader would
 # consider a plugin binary under bin/.
@@ -182,6 +196,133 @@ def find_binaries(entries: Iterable[Entry]) -> list[str]:
     return found
 
 
+# --- Binary-versus-key check ----------------------------------------------------------
+
+
+class ElfInfo(NamedTuple):
+    machine: int
+    is_android: bool
+    has_sections: bool = True
+
+
+def read_elf_info(path: Path) -> ElfInfo | None:
+    """Machine type and Android mark of an ELF file, or None for anything that is not a
+    well-formed ELF file. Never raises on a malformed file: every read is bounds-checked."""
+    try:
+        with path.open("rb") as handle:
+            file_size = os.fstat(handle.fileno()).st_size
+            ident = handle.read(16)
+            if len(ident) < 16 or ident[:4] != b"\x7fELF" or ident[4] not in (1, 2):
+                return None
+            if ident[5] not in (1, 2):
+                return None
+            is_64 = ident[4] == 2
+            order = "little" if ident[5] == 1 else "big"
+
+            def uint(offset: int, size: int) -> int | None:
+                # An offset past the file would make seek() raise on a huge value.
+                if offset < 0 or offset + size > file_size:
+                    return None
+                handle.seek(offset)
+                raw = handle.read(size)
+                return int.from_bytes(raw, order) if len(raw) == size else None
+
+            machine = uint(18, 2)
+            if machine is None:
+                return None
+            if is_64:
+                shoff, shentsize, shnum, shstrndx = (
+                    uint(40, 8),
+                    uint(58, 2),
+                    uint(60, 2),
+                    uint(62, 2),
+                )
+                offset_at, size_at, word = 24, 32, 8
+            else:
+                shoff, shentsize, shnum, shstrndx = (
+                    uint(32, 4),
+                    uint(46, 2),
+                    uint(48, 2),
+                    uint(50, 2),
+                )
+                offset_at, size_at, word = 16, 20, 4
+            if shoff is None or shentsize is None or shnum is None or shstrndx is None:
+                return None
+            # shnum == 0 with a section table, and shstrndx == SHN_XINDEX (0xffff), store the
+            # real values in section 0; no toolchain output needs that, so it reads as "no sections".
+            if shoff == 0 or shnum == 0 or shstrndx >= shnum:
+                return ElfInfo(machine, False, has_sections=False)
+            if shnum > _MAX_ELF_SECTIONS:
+                return None
+            if shentsize < size_at + word:
+                return None
+
+            str_header = shoff + shstrndx * shentsize
+            str_offset = uint(str_header + offset_at, word)
+            str_size = uint(str_header + size_at, word)
+            if str_offset is None or str_size is None or str_size > _MAX_SHSTRTAB_BYTES:
+                return None
+            if str_offset + str_size > file_size:
+                return None
+            handle.seek(str_offset)
+            names = handle.read(str_size)
+            if len(names) != str_size:
+                return None
+
+            needle = ANDROID_NOTE_SECTION.encode() + b"\0"
+            for index in range(shnum):
+                name_offset = uint(shoff + index * shentsize, 4)
+                if name_offset is None:
+                    return None
+                if names[name_offset : name_offset + len(needle)] == needle:
+                    return ElfInfo(machine, True)
+            return ElfInfo(machine, False)
+    except (OSError, ValueError, OverflowError):
+        return None
+
+
+def check_binary_matches_key(path: Path, key: str) -> None:
+    """Raise PackError when the binary at `path` cannot be what platform `key` promises.
+
+    Only linux-* and android-* keys are checked: both are ELF, and a Linux arm64 and an
+    Android arm64 library share a machine type but not a libc, so the loader's own machine
+    check passes one for the other and it fails later at dlopen with no useful message.
+    """
+    family, _, arch = key.partition("-")
+    if family not in ("linux", "android") or arch not in _ELF_MACHINES:
+        return
+    info = read_elf_info(path)
+    if info is None:
+        _fail(f"'{path.name}' under key '{key}' is not a readable ELF file")
+    wanted = _ELF_MACHINES[arch]
+    if info.machine != wanted:
+        found = _ELF_MACHINE_NAMES.get(info.machine, f"machine {info.machine}")
+        _fail(
+            f"'{path.name}' is built for {found}, but key '{key}' needs {_ELF_MACHINE_NAMES[wanted]}"
+        )
+    if family == "android" and not info.has_sections:
+        _fail(
+            f"'{path.name}' has no section headers, so its libc cannot be checked against "
+            f"key '{key}' (do not strip section headers from the binary)"
+        )
+    if family == "android" and not info.is_android:
+        _fail(
+            f"'{path.name}' is a Linux (glibc) binary, but key '{key}' needs one built with "
+            f"the Android NDK (no {ANDROID_NOTE_SECTION} section)"
+        )
+    if family == "linux" and info.is_android:
+        _fail(
+            f"'{path.name}' is an Android (bionic) binary, but key '{key}' needs a Linux "
+            f"(glibc) one (it has a {ANDROID_NOTE_SECTION} section)"
+        )
+
+
+def check_binaries_match_keys(entries: Iterable[Entry]) -> None:
+    for entry in entries:
+        if find_binaries([entry]):
+            check_binary_matches_key(entry.source, entry.arcname.split("/")[1])
+
+
 # --- The installer's rules, applied at pack time --------------------------------------
 
 
@@ -294,6 +435,7 @@ def build(args: argparse.Namespace) -> int:
     check_no_bundled_runtime(entries)
     check_size(entries)
     check_tier_layout(tier, manifest, entries)
+    check_binaries_match_keys(entries)
 
     output: Path = args.output or Path(f"{manifest['id']}-{manifest['version']}.qgcplugin")
     if output.exists() and not args.force:

@@ -347,6 +347,27 @@ def test_sdk_version_may_use_the_linux_arm64_key():
     assert _entry_errors(entry) == []
 
 
+def test_sdk_version_may_use_the_android_arm64_key():
+    entry = _good("sdk")
+    packages = entry["versions"][0]["packages"]
+    packages["android-arm64"] = copy.deepcopy(packages["windows-x64"])
+    assert _entry_errors(entry) == []
+
+
+def test_android_x64_key_is_refused():
+    entry = _good("sdk")
+    packages = entry["versions"][0]["packages"]
+    packages["android-x64"] = copy.deepcopy(packages["windows-x64"])
+    assert "'android-x64' is not one of" in "\n".join(_entry_errors(entry))
+
+
+def test_verification_record_accepts_android_arm64_and_refuses_android_x64():
+    schema = _load(ROOT / "schema" / "verification.schema.json")
+    keys = schema["$defs"]["item"]["properties"]["packages"]["propertyNames"]["enum"]
+    assert "android-arm64" in keys
+    assert "android-x64" not in keys
+
+
 def test_linux_armhf_key_is_refused():
     entry = _good("sdk")
     packages = entry["versions"][0]["packages"]

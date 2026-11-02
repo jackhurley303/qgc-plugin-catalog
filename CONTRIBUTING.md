@@ -43,6 +43,9 @@ existing version. It refuses a package URL outside the entry's own `releaseRepos
 its `repository` when the entry has no `releaseRepository`. It refuses an entry with `repository`
 whose `license` is not an OSI-approved SPDX id, and an entry whose repository is private or
 missing. It also refuses a package whose size, hash or `qgcplugin.json` disagrees with the entry.
+It refuses an `sdk` package whose binary is not under `bin/<key>/`. Under a `linux-*` or
+`android-*` key, the binary must be a readable ELF file. Its machine type and libc must match
+the key.
 
 CI runs the base branch's copy of the script, but the PR's own copy of `validate.yml`. A PR can
 therefore edit the workflow and skip the checks. CI catches mistakes; it does not stop an attack.

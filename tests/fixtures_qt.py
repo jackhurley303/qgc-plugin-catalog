@@ -81,8 +81,13 @@ def elf(
     note_type: int = 0x74510001,
     note_name: bytes = b"qt-project!\x00",
     note_count: int = 1,
+    machine: int | None = None,
+    android: bool = False,
 ) -> bytes:
     """An ELF image with a .note.qt.metadata section.
+
+    `machine` overrides the e_machine field (62 is x86-64, 183 is AArch64). With `android`, the
+    image also has the .note.android.ident section the NDK linker writes.
 
     With `stray`, the image also holds `QTMETADATA !` strings outside the note, carrying a
     different (wrong) Qt version, as a real x86-64 plugin does.
@@ -95,6 +100,8 @@ def elf(
     note_bytes += _pad(note_name, 4) + desc
     note_bytes *= note_count
     strtab = b"\x00.note.qt.metadata\x00.shstrtab\x00.rodata\x00"
+    if android:
+        strtab += b".note.android.ident\x00"
     note_name_off, shstr_name_off, rodata_name_off = 1, 1 + len(b".note.qt.metadata\x00"), 0
     rodata_name_off = shstr_name_off + len(b".shstrtab\x00")
     rodata = b""
@@ -117,13 +124,15 @@ def elf(
         sections.append(sh(note_name_off, note_off, len(note_bytes)))
     sections.append(sh(shstr_name_off, str_off, len(strtab)))
     sections.append(sh(rodata_name_off, rodata_off, len(rodata)))
-    shstrndx = len(sections) - 2
+    if android:
+        sections.append(sh(rodata_name_off + len(b".rodata\x00"), rodata_off, 0))
+    shstrndx = len(sections) - (3 if android else 2)
     ident = b"\x7fELF" + bytes([2 if is64 else 1, 2 if big else 1, 1]) + b"\x00" * 9
     if is64:
         ehdr = ident + struct.pack(
             f"{e}HHIQQQIHHHHHH",
             3,
-            62,
+            62 if machine is None else machine,
             1,
             0,
             0,

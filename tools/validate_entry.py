@@ -17,9 +17,12 @@ entry leaves out `repository` and names `releaseRepository`, a public repository
 only the release packages.
 
 The package rules come from tools/vendor/pack_plugin.py, a pinned copy of the plugin SDK's
-tools/pack_plugin.py (QGroundControl fork, commit 5cc212a16a2a9e099dd098d67d5b08fcb34cc82e).
+tools/pack_plugin.py (QGroundControl fork, commit e86c25c7a2d75e3bd8acb21295756b44b529470e).
 Copy it again byte for byte when the SDK's rules change. It imports the fork's _bootstrap.py,
 which sits beside this script as another byte-for-byte copy.
+
+Every sdk-tier package has its binary checked against its platform key, with the packer's own
+check_binary_matches_key (a glibc ELF under an Android key is refused, and the reverse).
 
 A version with `qtVersion` has its binary's Qt version read from the binary and compared;
 tools/qt_metadata.py does the reading.
@@ -527,9 +530,64 @@ def qt_version_errors(data: bytes, key: str, version: dict) -> list[str]:
     return []
 
 
+def binary_key_errors(data: bytes, key: str) -> list[str]:
+    """The package's binary must sit under bin/<key>/ and be built for the platform `key` names.
+
+    The loader reads only bin/<key>/ for the running platform, while the tier layout rule
+    accepts one binary under any bin/<subdir>/. So a package with no binary under its own key
+    is refused here: that binary would never load, and it could hide a binary built for
+    another platform from the check.
+
+    The platform check is tools/vendor/pack_plugin.py's check_binary_matches_key, the one the
+    packer runs, so both refuse the same packages. It reads a file, so each binary is written to
+    a temporary directory first. It covers only `linux-*` and `android-*` keys; any other key
+    passes once the binary is found.
+    """
+    prefix = f"bin/{key}/"
+    errors: list[str] = []
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        binaries = [
+            info
+            for info in archive.infolist()
+            if info.filename.startswith(prefix)
+            and info.filename.count("/") == 2
+            and info.filename.endswith(pack_plugin.BINARY_SUFFIXES)
+        ]
+        if not binaries:
+            elsewhere = [
+                info.filename
+                for info in archive.infolist()
+                if info.filename.startswith("bin/")
+                and info.filename.count("/") == 2
+                and info.filename.endswith(pack_plugin.BINARY_SUFFIXES)
+            ]
+            where = f"the binary is at {elsewhere[0]}" if elsewhere else "the package has none"
+            return [f"key '{key}' needs a plugin binary under {prefix}, but {where}"]
+        if key.partition("-")[0] not in ("linux", "android"):
+            return []
+        for info in binaries:
+            if info.file_size > MAX_BINARY_BYTES:
+                errors.append(f"{info.filename} is too large to check against key '{key}'")
+                continue
+            binary = _read_member(archive, info, MAX_BINARY_BYTES)
+            if isinstance(binary, str):
+                errors.append(binary)
+                continue
+            # A fixed ASCII name keeps any name from the zip (a NUL, a long or non-ASCII one)
+            # out of the filesystem call. The message starts with the real name.
+            with tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / ("plugin" + Path(info.filename).suffix)
+                path.write_bytes(binary)
+                try:
+                    pack_plugin.check_binary_matches_key(path, key)
+                except pack_plugin.PackError as exc:
+                    errors.append(f"{info.filename}: {exc}")
+    return errors
+
+
 def archive_errors(data: bytes, entry: dict, version: dict, key: str) -> list[str]:
-    """Open the package without extracting it. Only qgcplugin.json is decompressed, and the
-    binary when the version names a `qtVersion`."""
+    """Open the package without extracting it. qgcplugin.json is decompressed, and for an sdk
+    package its binary under bin/<key>/ too (the platform check and `qtVersion`)."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
@@ -593,6 +651,7 @@ def archive_errors(data: bytes, entry: dict, version: dict, key: str) -> list[st
         errors.append(str(exc))
         return errors
     if version["tier"] == "sdk":
+        errors.extend(binary_key_errors(data, key))
         errors.extend(qt_version_errors(data, key, version))
     return errors
 

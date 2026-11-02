@@ -5,7 +5,9 @@
 
 ## Status — current position / next step
 
-Planned 2026-10-27. CA1 has not run.
+CA1 done 2026-11-02: the schemas accept `android-arm64`, and `validate_entry.py` refuses an sdk
+package whose binary is not under `bin/<key>/` or does not match its key. This plan has no row
+left; the coordinating plan's E1 proves its Change acceptance.
 
 This plan runs inside one run with the coordinating plan and the QDrive plan. Its single row, CA1,
 sits after the coordinating plan's U1 in that plan's Execution order. The commands are in the
@@ -67,7 +69,9 @@ plan's A1, through U1's packer.
 
 - **Scope:** add `android-arm64` to both schema enums and the README. Refresh the vendored packer
   from the fork after U1. `validate_entry.py` runs the packer's binary check on each sdk-tier
-  package and refuses a mismatch, naming the key and what the binary is.
+  package and refuses a mismatch, naming the key and what the binary is. U1 shipped that check as
+  `check_binary_matches_key(path, key)`, which raises only `PackError` and checks only `linux-*`
+  and `android-*` keys.
 - **Not in scope:** `android-x64`; a minimum Android API field (the SDK enforces API 28 at build
   time, so the catalog needs none).
 - **Files:** `schema/entry.schema.json`, `schema/verification.schema.json`,
@@ -95,7 +99,7 @@ plan's A1, through U1's packer.
 
 The coordinating plan's Execution order places this row.
 
-- [ ] **CA1** — the `android-arm64` key and the binary check — [Sonnet · medium]
+- [x] **CA1** — the `android-arm64` key and the binary check — [Sonnet · medium] — shipped 2026-11-02
 
 ## Open questions
 
