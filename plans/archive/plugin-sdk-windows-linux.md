@@ -5,13 +5,16 @@
 
 ## Status — current position / next step
 
+**COMPLETE 2026-11-01.** The coordinating plan's E1 and `/auto-verify` passed, and the fork run
+branch landed.
+
 CA1 shipped 2026-10-26: the `linux-arm64` key, the optional sdk-only `qtVersion`, and a validator
 that reads each package binary's Qt header per format. The PE reader is unmeasured until the
 coordinating plan's K2 runs it on a real DLL. This plan has no rows left.
 
 This plan runs inside one run with the coordinating plan and the QDrive plan. Its single row, CA1,
 sits after the coordinating plan's U2 in that plan's Execution order. The commands are in the
-coordinating plan's Status: `~/.claude/local/qgroundcontrol/plans/plugin-sdk-windows-linux.md`.
+coordinating plan's Status: `~/.claude/local/qgroundcontrol/plans/archive/plugin-sdk-windows-linux.md`.
 
 ## Goal & summary
 
@@ -26,7 +29,7 @@ Both are additive to schema v1. A QGC build that does not know them ignores them
 The coordinating plan owns the order across repos, the whole-change acceptance, and the index
 contract (the "The index is the contract" section of
 `~/.claude/local/qgroundcontrol/plans/plugin-catalog.md`, which its U2 extends). QDrive's plan,
-`~/qgroundcontrol/plugins/qdrive/plans/plugin-sdk-windows-linux.md`, publishes the first entry that
+`~/qgroundcontrol/plugins/qdrive/plans/archive/plugin-sdk-windows-linux.md`, publishes the first entry that
 uses both additions.
 
 ## Architecture / approach
