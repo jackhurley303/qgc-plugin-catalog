@@ -73,6 +73,44 @@
           "size": 1320095
         }
       }
+    },
+    {
+      "version": "1.2.0",
+      "tier": "sdk",
+      "apiVersion": 2,
+      "hostVersion": {
+        "min": "5.0",
+        "max": ""
+      },
+      "qtVersion": "6.12",
+      "released": "2026-11-03",
+      "packages": {
+        "macos-universal": {
+          "url": "https://github.com/jackhurley303/qdrive-releases/releases/download/v1.2.0/org.qdrive.plugin-1.2.0-macos-universal.qgcplugin",
+          "sha256": "35e876f898ef852a16e35489b90b915ce4a37e264b066817faa8f9067b9ab752",
+          "size": 2264954
+        },
+        "windows-x64": {
+          "url": "https://github.com/jackhurley303/qdrive-releases/releases/download/v1.2.0/org.qdrive.plugin-1.2.0-windows-x64.qgcplugin",
+          "sha256": "95166ed56e0623354152676108ff30d954c112c14701973bccce33082fb1ba1d",
+          "size": 868328
+        },
+        "linux-x64": {
+          "url": "https://github.com/jackhurley303/qdrive-releases/releases/download/v1.2.0/org.qdrive.plugin-1.2.0-linux-x64.qgcplugin",
+          "sha256": "df5562a1e22ae89b8be945c66922a405fa5364d562e89b7b0802ef075c134d4f",
+          "size": 1372211
+        },
+        "linux-arm64": {
+          "url": "https://github.com/jackhurley303/qdrive-releases/releases/download/v1.2.0/org.qdrive.plugin-1.2.0-linux-arm64.qgcplugin",
+          "sha256": "4a74f620a486e82f177372940ee4561c99b58ab93266369d3f146272bf5aded1",
+          "size": 1320098
+        },
+        "android-arm64": {
+          "url": "https://github.com/jackhurley303/qdrive-releases/releases/download/v1.2.0/org.qdrive.plugin-1.2.0-android-arm64.qgcplugin",
+          "sha256": "9d7798f331b90cf5353a32507ca6dd5b4a83e6c2b438730789d7392e508af09d",
+          "size": 12279378
+        }
+      }
     }
   ]
 }
