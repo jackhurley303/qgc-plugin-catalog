@@ -5,9 +5,9 @@
 
 ## Status — current position / next step
 
-CA1 done 2026-11-02: the schemas accept `android-arm64`, and `validate_entry.py` refuses an sdk
-package whose binary is not under `bin/<key>/` or does not match its key. This plan has no row
-left; the coordinating plan's E1 proves its Change acceptance.
+**COMPLETE 2026-11-03.** CA1 done 2026-11-02: the schemas accept `android-arm64`, and
+`validate_entry.py` refuses an sdk package whose binary is not under `bin/<key>/` or does not match
+its key. The coordinating plan's E1 and `/auto-verify` proved this plan's Change acceptance.
 
 This plan runs inside one run with the coordinating plan and the QDrive plan. Its single row, CA1,
 sits after the coordinating plan's U1 in that plan's Execution order. The commands are in the
